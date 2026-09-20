@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#f7f5fa">
+  <meta name="robots" content="noindex,nofollow,noarchive">
+  <title>欲望状态</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <div class="mist mist--one" aria-hidden="true"></div>
+  <div class="mist mist--two" aria-hidden="true"></div>
+  <main class="shell">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">DESIRE PULSE</p>
+        <h1>欲望状态</h1>
+      </div>
+      <div class="live-pill" id="live-pill">
+        <span class="live-dot"></span>
+        <span id="live-label">读取中</span>
+      </div>
+    </header>
+    <section class="hero card" aria-labelledby="strongest-heading">
+      <div class="hero-orb" aria-hidden="true">心</div>
+      <div class="hero-copy">
+        <p class="section-kicker">此刻最强</p>
+        <div class="hero-line">
+          <h2 id="strongest-heading">正在读取</h2>
+          <strong id="strongest-value">—</strong>
+        </div>
+        <p class="intent" id="intent-label">等待状态回应</p>
+        <p class="muted" id="expression-label">读取不会改变任何数值</p>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="drives-heading">
+      <div class="section-title">
+        <div>
+          <p class="section-kicker">INNER DRIVES</p>
+          <h2 id="drives-heading">内在驱力</h2>
+        </div>
+        <time id="updated-at">—</time>
+      </div>
+      <div class="drive-list" id="drive-list" aria-live="polite"></div>
+    </section>
+
+    <details class="card disclosure timeline-panel" open>
+      <summary>
+        <span>
+          <span class="summary-icon">💓</span>
+          心跳时间线
+        </span>
+        <span class="count" id="timeline-count">0 条</span>
+      </summary>
+      <div class="timeline-list" id="timeline-list"></div>
+    </details>
+
+    <details class="card disclosure">
+      <summary>
+        <span>
+          <span class="summary-icon">💭</span>
+          浮念与执念
+        </span>
+        <span class="count" id="thought-count">0 条</span>
+      </summary>
+      <div class="thought-list" id="thought-list"></div>
+    </details>
+
+    <details class="card disclosure">
+      <summary>
+        <span>
+          <span class="summary-icon">⚙️</span>
+          运行状态
+        </span>
+        <span class="chevron">查看</span>
+      </summary>
+      <dl class="runtime-list" id="runtime-list"></dl>
+    </details>
+
+    <button class="manage-button" type="button" disabled>
+      <span>🔒</span>
+      管理数值
+      <small>安全调整入口将在确认后启用</small>
+    </button>
+
+    <footer>
+      <span>只读面板</span>
+      <span>刷新不会扰动状态</span>
+      <span>不调用模型</span>
+    </footer>
+  </main>
+  <div class="error-toast" id="error-toast" role="status" hidden>暂时无法读取状态</div>
+</body>
+</html>

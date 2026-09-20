@@ -1,0 +1,38 @@
+[Unit]
+Description=Aru desire read-only dashboard
+After=network.target
+ConditionPathExists=/var/lib/aru-desire-heartbeat/state.json
+
+[Service]
+Type=simple
+User=aru-desire
+Group=aru-desire
+UMask=0077
+Environment=NODE_ENV=production
+Environment=ARU_DESIRE_DASHBOARD_HOST=127.0.0.1
+Environment=ARU_DESIRE_DASHBOARD_PORT=18760
+Environment=ARU_DESIRE_CONFIG=/opt/aru-desire-heartbeat/config/default.json
+Environment=ARU_DESIRE_DATA_DIR=/var/lib/aru-desire-heartbeat
+Environment=ARU_DESIRE_DASHBOARD_PUBLIC=/opt/aru-desire-heartbeat/dashboard/public
+ExecStart=/usr/bin/python3 -I /opt/aru-desire-heartbeat/dashboard/server.py
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_INET AF_INET6
+ReadOnlyPaths=/var/lib/aru-desire-heartbeat
+
+[Install]
+WantedBy=multi-user.target

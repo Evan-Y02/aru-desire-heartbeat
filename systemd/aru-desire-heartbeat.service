@@ -1,0 +1,23 @@
+[Unit]
+Description=Aru autonomous desire heartbeat
+After=local-fs.target
+ConditionPathExists=/var/lib/aru-desire-heartbeat/state.json
+
+[Service]
+Type=oneshot
+User=aru-desire
+Group=aru-desire
+UMask=0077
+ExecStart=/usr/bin/node --jitless /opt/aru-desire-heartbeat/bin/desire-cycle.mjs --config /opt/aru-desire-heartbeat/config/default.json --delivery-config /opt/aru-desire-heartbeat/config/aru-delivery.json --data-dir /var/lib/aru-desire-heartbeat
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadWritePaths=/var/lib/aru-desire-heartbeat

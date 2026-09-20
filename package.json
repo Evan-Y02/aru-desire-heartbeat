@@ -1,0 +1,30 @@
+{
+  "name": "aru-desire-heartbeat",
+  "version": "0.9.5",
+  "description": "A lightweight, persistent and testable desire heartbeat for AI companions.",
+  "license": "MIT",
+  "private": false,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test && python3 -m unittest discover -s test -p '*_test.py'"
+  },
+  "bin": {
+    "desire-heartbeat": "./bin/desire-heartbeat.mjs",
+    "desire-cycle": "./bin/desire-cycle.mjs",
+    "desire-deliver": "./bin/desire-deliver.mjs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Evan-Y02/aru-desire-heartbeat.git"
+  },
+  "keywords": [
+    "ai-companion",
+    "desire-system",
+    "heartbeat",
+    "state-machine",
+    "aru"
+  ]
+}

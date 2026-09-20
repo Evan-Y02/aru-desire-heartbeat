@@ -1,0 +1,10 @@
+data/*
+!data/.gitkeep
+*.log
+*.pyc
+__pycache__/
+.DS_Store
+.env
+.env.*
+*.send-credential
+delivery-attempts/

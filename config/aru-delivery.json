@@ -1,0 +1,9 @@
+{
+  "schema": "aru.desire-heartbeat.external-trigger.v1",
+  "version": 1,
+  "enabled": false,
+  "credentialPath": "/var/lib/aru-desire-heartbeat/external-trigger.send-credential",
+  "enableFile": "/etc/aru-desire-heartbeat/external-trigger.enable",
+  "timeoutMs": 5000,
+  "maxEventBytes": 32768
+}

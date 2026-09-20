@@ -1,0 +1,84 @@
+{
+  "schema": "aru.desire-heartbeat.config.v2",
+  "version": 2,
+  "heartbeatSeconds": 600,
+  "observeOnly": true,
+  "deliveryEnabled": false,
+  "triggerThreshold": 0.80,
+  "fatigueGate": 0.72,
+  "clockSkewToleranceSeconds": 5,
+  "maxElapsedSeconds": 604800,
+  "selfDriveVariation": 0.35,
+  "solo": {
+    "enabled": true,
+    "cooldownSeconds": 10800,
+    "carryoverFactor": 0.38,
+    "basePreference": 0.25,
+    "libidoOverAttachmentWeight": 0.80,
+    "afterContactBonus": 0.25,
+    "afterSoloPenalty": 0.20,
+    "fatigueWeight": 0.15
+  },
+  "satisfactionCarryoverFactor": 0.70,
+  "thoughts": {
+    "autoCreateAbove": 0.55,
+    "autoFixationAbove": 0.80,
+    "autoReinforcePerHeartbeat": 0.02,
+    "actionCarryoverFactor": 0.35,
+    "flitDecay": 0.82,
+    "fixationDecay": 0.92,
+    "flitClearBelow": 0.06,
+    "maxCount": 128,
+    "maxTextLength": 280
+  },
+  "initialDrives": {
+    "attachment": 0.00,
+    "curiosity": 0.00,
+    "reflection": 0.00,
+    "duty": 0.00,
+    "social": 0.00,
+    "fatigue": 0.00,
+    "libido": 0.00,
+    "stress": 0.00
+  },
+  "driveGrowthPerHour": {
+    "attachment": 0.300,
+    "curiosity": 0.240,
+    "reflection": 0.000,
+    "duty": 0.000,
+    "social": 0.220,
+    "fatigue": 0.000,
+    "libido": 0.270,
+    "stress": 0.000
+  },
+  "driveHomeLevels": {
+    "attachment": 0.000,
+    "curiosity": 0.000,
+    "reflection": 0.000,
+    "duty": 0.000,
+    "social": 0.000,
+    "fatigue": 0.000,
+    "libido": 0.000,
+    "stress": 0.000
+  },
+  "driveReturnPerHour": {
+    "attachment": 0.000,
+    "curiosity": 0.000,
+    "reflection": 0.015,
+    "duty": 0.012,
+    "social": 0.000,
+    "fatigue": 0.010,
+    "libido": 0.000,
+    "stress": 0.025
+  },
+  "satisfactionDrops": {
+    "attachment": 0.45,
+    "curiosity": 0.40,
+    "reflection": 0.40,
+    "duty": 0.50,
+    "social": 0.40,
+    "fatigue": 0.35,
+    "libido": 0.30,
+    "stress": 0.45
+  }
+}
