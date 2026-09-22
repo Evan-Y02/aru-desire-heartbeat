@@ -31,6 +31,7 @@ function liveHeartbeat() {
   const config = structuredClone(baseConfig);
   config.observeOnly = false;
   config.deliveryEnabled = true;
+  config.expression.baseWillingness = 1;
   return config;
 }
 
@@ -77,14 +78,13 @@ test('an idle cycle only advances persisted state', async () => {
   assert.equal(result.status, 'idle');
   const saved = await loadState(directory, baseConfig);
   assert.equal(saved.lastTickAt.epochMs, NOW + 600_000);
-  assert.equal(saved.timeline.length, 1);
-  assert.equal(saved.timeline[0].outcome, 'idle');
-  assert.equal(saved.timeline[0].reasons.includes('below-trigger-threshold'), true);
+  assert.equal(saved.timeline.length, 0);
 });
 
 test('disabled delivery holds a durable pending decision', async () => {
   const directory = await tempDirectory();
   const heartbeatConfig = structuredClone(baseConfig);
+  heartbeatConfig.expression.baseWillingness = 1;
   await initial(directory, heartbeatConfig, { attachment: 0.95, fatigue: 0.1 });
   const result = await runHeartbeatCycle({
     dataDirectory: directory,

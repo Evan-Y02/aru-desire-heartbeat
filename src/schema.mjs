@@ -66,6 +66,19 @@ export function validateConfig(config) {
   }
   assertUnit(config.triggerThreshold, 'config.triggerThreshold');
   assertUnit(config.fatigueGate, 'config.fatigueGate');
+  assertPlainObject(config.expression, 'config.expression');
+  for (const key of [
+    'baseWillingness', 'scoreWeight', 'attachmentWeight', 'socialWeight',
+    'fatiguePenalty', 'stressPenalty', 'mandatoryAt',
+  ]) assertUnit(config.expression[key], `config.expression.${key}`);
+  assertInteger(
+    config.expression.maxConsecutiveWithholds,
+    'config.expression.maxConsecutiveWithholds',
+    1,
+  );
+  if (config.expression.mandatoryAt < config.triggerThreshold) {
+    throw new ValidationError('mandatory expression threshold must not be below trigger threshold');
+  }
   assertInteger(config.clockSkewToleranceSeconds, 'config.clockSkewToleranceSeconds');
   assertInteger(config.maxElapsedSeconds, 'config.maxElapsedSeconds', 1);
   assertUnit(config.selfDriveVariation, 'config.selfDriveVariation');
@@ -168,6 +181,16 @@ function validateTimeline(timeline) {
   }
 }
 
+function validateExpression(expression) {
+  if (expression === undefined) return;
+  assertPlainObject(expression, 'state.expression');
+  const keys = Object.keys(expression).sort();
+  if (keys.join(',') !== 'consecutiveWithholds') {
+    throw new ValidationError('state.expression contains unexpected fields');
+  }
+  assertInteger(expression.consecutiveWithholds, 'state.expression.consecutiveWithholds');
+}
+
 function validateSolo(solo) {
   if (solo === undefined) return;
   assertPlainObject(solo, 'state.solo');
@@ -192,6 +215,7 @@ export function validateState(state, config) {
   assertDriveRecord(state.drives, 'state.drives', assertUnit);
   assertDriveRecord(state.lastSatisfiedAt, 'state.lastSatisfiedAt', (value, label) => assertTimePair(value, label, true));
   validateSolo(state.solo);
+  validateExpression(state.expression);
   if (!Array.isArray(state.thoughts) || state.thoughts.length > config.thoughts.maxCount) {
     throw new ValidationError('state.thoughts is invalid');
   }

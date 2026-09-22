@@ -15,6 +15,9 @@ function normalizeState(state) {
       lastLibidoChoice: null,
     };
   }
+  if (state.expression === undefined) {
+    state.expression = { consecutiveWithholds: 0 };
+  }
   return state;
 }
 

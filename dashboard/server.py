@@ -31,7 +31,7 @@ INTENT_LABELS = {
     "solo": "想独处消解", "share": "想与你分享", "confide": "想向你倾诉",
 }
 TIMELINE_OUTCOME_LABELS = {
-    "idle": "继续积累", "withheld": "旧版未开口",
+    "idle": "继续积累", "withheld": "暂时没开口",
     "held_disabled": "意图被门禁留住", "submitting": "正在提交",
     "submitted": "来找你了", "held_claimed": "已避免重复发送",
     "delivery_failed": "发送未确认", "solo_completed": "自己处理了",
@@ -41,7 +41,14 @@ TIMELINE_REASON_LABELS = {
     "fatigue-gate": "疲劳门禁", "below-trigger-threshold": "尚未达到门槛",
     "observe-only": "仅观察", "delivery-disabled": "发送尚未开启",
     "delivery-adapter-disabled": "Aru 传输尚未开启",
-    "expression-withheld": "旧版概率门控记录", "delivery-accepted": "Aru 已接收",
+    "expression-withheld": "这次自主选择不说",
+    "expression-chosen": "这次自主选择表达",
+    "withheld-first": "连续第 1 次没开口",
+    "withheld-second": "连续第 2 次没开口",
+    "withheld-third": "连续第 3 次没开口；下次达到门槛必须联系",
+    "forced-after-three-withholds": "已到沉默上限，必须联系",
+    "forced-at-full": "欲望已满，必须联系",
+    "delivery-accepted": "Aru 已接收",
     "delivery-already-claimed": "已阻止重复发送", "delivery-failed": "发送结果未确认",
     "solo-completed": "Solo 已完成",
 }
@@ -237,6 +244,7 @@ def timeline_view(entry):
         "scorePercent": None if score is None else percentage(score),
         "willingnessPercent": None if willingness is None else percentage(willingness),
         "reasons": [TIMELINE_REASON_LABELS[reason] for reason in reasons],
+        "reasonCodes": list(reasons),
         "drives": [
             {"drive": name, "label": DRIVE_LABELS[name], "valuePercent": percentage(values[name])}
             for name in DRIVES
@@ -289,6 +297,16 @@ def create_solo_view(state, config, now_ms):
 
 def create_dashboard_snapshot(state, config, now_ms=None):
     drives, thoughts, timeline = validate_inputs(state, config)
+    expression_state = state.get("expression") or {"consecutiveWithholds": 0}
+    if (not isinstance(expression_state, dict) or
+            not isinstance(expression_state.get("consecutiveWithholds"), int) or
+            expression_state["consecutiveWithholds"] < 0):
+        raise ValueError("expression state is invalid")
+    expression_config = config.get("expression")
+    if (not isinstance(expression_config, dict) or
+            not isinstance(expression_config.get("maxConsecutiveWithholds"), int) or
+            expression_config["maxConsecutiveWithholds"] < 1):
+        raise ValueError("expression config is invalid")
     now_ms = int(time.time() * 1000) if now_ms is None else int(now_ms)
     strongest_drive, strongest_value = strongest(drives, DRIVES)
     candidate_drive, candidate_value = strongest(drives, ACTIVE_DRIVES)
@@ -343,6 +361,8 @@ def create_dashboard_snapshot(state, config, now_ms=None):
             "thresholdPercent": percentage(config["triggerThreshold"]),
             "code": status_code,
             "label": status_label,
+            "consecutiveWithholds": expression_state["consecutiveWithholds"],
+            "maxConsecutiveWithholds": expression_config["maxConsecutiveWithholds"],
         },
         "drives": [
             {"drive": drive, "label": DRIVE_LABELS[drive], "valuePercent": percentage(drives[drive])}

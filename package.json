@@ -1,6 +1,6 @@
 {
   "name": "aru-desire-heartbeat",
-  "version": "0.9.5",
+  "version": "0.9.6",
   "description": "A lightweight, persistent and testable desire heartbeat for AI companions.",
   "license": "MIT",
   "private": false,

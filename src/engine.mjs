@@ -48,6 +48,9 @@ export function createInitialState(config, epochMs = Date.now()) {
     thoughts: [],
     timeline: [],
     pendingDecision: null,
+    expression: {
+      consecutiveWithholds: 0,
+    },
     solo: {
       count: 0,
       lastSoloAt: null,
@@ -104,8 +107,26 @@ export function chooseLibidoIntent(state, config, nowMs) {
   };
 }
 
-function routeCandidate(state, config, nowMs, candidate) {
-  if (candidate?.drive !== 'libido') return candidate;
+function expressionChoice(state, config, nowMs, candidate) {
+  const range = Math.max(Number.EPSILON, 1 - config.triggerThreshold);
+  const scoreProgress = clamp((candidate.score - config.triggerThreshold) / range);
+  const willingness = clamp(
+    config.expression.baseWillingness
+      + scoreProgress * config.expression.scoreWeight
+      + state.drives.attachment * config.expression.attachmentWeight
+      + state.drives.social * config.expression.socialWeight
+      - state.drives.fatigue * config.expression.fatiguePenalty
+      - state.drives.stress * config.expression.stressPenalty,
+  );
+  const bucket = Math.floor(nowMs / (config.heartbeatSeconds * 1000));
+  const draw = deterministicUnit(
+    `${bucket}:${candidate.drive}:expression:${state.expression.consecutiveWithholds}`,
+  );
+  return { willingness, draw };
+}
+
+function routeCandidate(state, config, nowMs, candidate, { forceContact = false } = {}) {
+  if (candidate?.drive !== 'libido' || forceContact) return candidate;
   return { ...candidate, intent: chooseLibidoIntent(state, config, nowMs).intent };
 }
 
@@ -220,12 +241,53 @@ export function sentinel(state, config, nowMs, candidate, { clockValid = true } 
 }
 
 export function formDecision(state, config, nowMs, { clockValid = true } = {}) {
+  state.expression ??= { consecutiveWithholds: 0 };
   let candidate = pickIntent(state.drives);
-  const guard = sentinel(state, config, nowMs, candidate, { clockValid });
+  let guard = sentinel(state, config, nowMs, candidate, { clockValid });
+  if (candidate?.score >= config.expression.mandatoryAt &&
+      guard.formationBlockers.includes('fatigue-gate')) {
+    const formationBlockers = guard.formationBlockers.filter(
+      (reason) => reason !== 'fatigue-gate',
+    );
+    guard = {
+      ...guard,
+      formationBlockers,
+      canFormDecision: formationBlockers.length === 0,
+    };
+  }
   if (!guard.canFormDecision) {
+    if (guard.formationBlockers.includes('below-trigger-threshold')) {
+      state.expression.consecutiveWithholds = 0;
+    }
     return { decision: null, candidate, sentinel: guard, expression: null };
   }
-  candidate = routeCandidate(state, config, nowMs, candidate);
+
+  const forcedReason = candidate.score >= config.expression.mandatoryAt
+    ? 'forced-at-full'
+    : state.expression.consecutiveWithholds >= config.expression.maxConsecutiveWithholds
+      ? 'forced-after-three-withholds'
+      : null;
+  const choice = expressionChoice(state, config, nowMs, candidate);
+  candidate = routeCandidate(
+    state, config, nowMs, candidate, { forceContact: forcedReason !== null },
+  );
+  if (forcedReason === null && choice.draw >= choice.willingness) {
+    state.expression.consecutiveWithholds += 1;
+    state.lastDecisionAt = timePair(nowMs);
+    return {
+      decision: null,
+      candidate,
+      sentinel: guard,
+      expression: {
+        expressed: false,
+        willingness: choice.willingness,
+        draw: choice.draw,
+        forcedReason: null,
+        withholdCount: state.expression.consecutiveWithholds,
+      },
+    };
+  }
+
   const sequence = nextSequence(state);
   const isSolo = candidate.intent === SOLO_INTENT;
   const deliveryBlockers = isSolo ? [] : guard.deliveryBlockers;
@@ -243,7 +305,18 @@ export function formDecision(state, config, nowMs, { clockValid = true } = {}) {
   };
   state.pendingDecision = decision;
   state.lastDecisionAt = timePair(nowMs);
-  return { decision, candidate, sentinel: guard, expression: null };
+  return {
+    decision,
+    candidate,
+    sentinel: guard,
+    expression: {
+      expressed: true,
+      willingness: forcedReason === null ? choice.willingness : 1,
+      draw: forcedReason === null ? choice.draw : null,
+      forcedReason,
+      withholdCount: state.expression.consecutiveWithholds,
+    },
+  };
 }
 
 export function tickState(input, config, nowMs = Date.now()) {
@@ -412,6 +485,7 @@ export function satisfySoloDecision(input, config, decisionId, nowMs = Date.now(
   state.solo.lastSoloAt = timePair(nowMs);
   state.solo.refractoryUntil = timePair(nowMs + config.solo.cooldownSeconds * 1000);
   state.solo.lastLibidoChoice = SOLO_INTENT;
+  state.expression.consecutiveWithholds = 0;
   settleAutomaticThought(state, config, 'libido', nowMs);
   state.pendingDecision = null;
   state.updatedAt = timePair(nowMs);
@@ -439,6 +513,7 @@ export function satisfyDecision(input, config, decisionId, nowMs = Date.now()) {
   );
   state.lastSatisfiedAt[drive] = timePair(nowMs);
   if (drive === 'libido') state.solo.lastLibidoChoice = 'seek_closeness';
+  state.expression.consecutiveWithholds = 0;
   settleAutomaticThought(state, config, drive, nowMs);
   state.pendingDecision = null;
   state.updatedAt = timePair(nowMs);
@@ -480,16 +555,18 @@ export function simulateAutonomy(input, config, ticks, stepSeconds = config.hear
     const nowMs = start + index * stepSeconds * 1000;
     const result = tickState(state, config, nowMs);
     state = result.state;
-    if (state.pendingDecision) {
-      const decision = structuredClone(state.pendingDecision);
+    if (result.expression) {
       impulses.push({
         at: timePair(nowMs),
-        drive: decision.drive,
-        intent: decision.intent,
-        score: decision.score,
-        expressed: true,
-        willingness: 1,
+        drive: result.candidate.drive,
+        intent: result.candidate.intent,
+        score: result.candidate.score,
+        expressed: result.expression.expressed,
+        willingness: result.expression.willingness,
       });
+    }
+    if (state.pendingDecision) {
+      const decision = structuredClone(state.pendingDecision);
       if (decision.intent === SOLO_INTENT) {
         solos.push(decision);
         state = satisfySoloDecision(state, config, decision.id, nowMs);
@@ -511,6 +588,9 @@ export function publicSnapshot(state, extra = {}) {
     thoughtTypes: {
       flit: state.thoughts.filter((thought) => thought.type === 'flit').length,
       fixation: state.thoughts.filter((thought) => thought.type === 'fixation').length,
+    },
+    expression: {
+      consecutiveWithholds: state.expression?.consecutiveWithholds ?? 0,
     },
     solo: {
       count: state.solo.count,

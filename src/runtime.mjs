@@ -28,7 +28,16 @@ export async function runHeartbeatCycle({
     const extraReasons = [];
     let status = 'idle';
 
-    if (pending && actionDisabled) {
+    if (tick.expression?.expressed === false) {
+      status = 'withheld';
+      extraReasons.push('expression-withheld');
+      const countReason = {
+        1: 'withheld-first',
+        2: 'withheld-second',
+        3: 'withheld-third',
+      }[tick.expression.withholdCount];
+      if (countReason) extraReasons.push(countReason);
+    } else if (pending && actionDisabled) {
       status = 'held_disabled';
       if (!isSolo && !deliveryConfig.enabled) extraReasons.push('delivery-adapter-disabled');
     } else if (pending && isSolo) {
@@ -37,11 +46,17 @@ export async function runHeartbeatCycle({
     } else if (pending) {
       status = 'submitting';
     }
+    if (tick.expression?.expressed === true) {
+      extraReasons.push('expression-chosen');
+      if (tick.expression.forcedReason) extraReasons.push(tick.expression.forcedReason);
+    }
 
-    appendTimeline(
-      tick.state,
-      createTimelineEntry(tick, heartbeatConfig, nowMs, status, extraReasons),
-    );
+    if (pending || tick.expression !== null) {
+      appendTimeline(
+        tick.state,
+        createTimelineEntry(tick, heartbeatConfig, nowMs, status, extraReasons),
+      );
+    }
 
     if (pending && isSolo && !actionDisabled) {
       const completed = satisfySoloDecision(
@@ -66,7 +81,7 @@ export async function runHeartbeatCycle({
         state: tick.state,
         elapsedSeconds: tick.elapsedSeconds,
         candidate: tick.candidate,
-        expression: null,
+        expression: tick.expression,
       };
     }
     if (actionDisabled) {

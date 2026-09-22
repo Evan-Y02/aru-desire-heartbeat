@@ -89,17 +89,40 @@ function renderThoughts(thoughts) {
 }
 
 function timelineDescription(entry) {
+  const innerVoice = {
+    attachment: '想念已经浮上来，他在想是不是该靠近你、陪你待一会儿。',
+    curiosity: '好奇心已经浮上来，他想把刚冒出的念头和你分享。',
+    reflection: '有些感受在心里聚拢，他想找你认真说一说。',
+    social: '他开始想念熟悉的交流，最先想到的是来找你。',
+    libido: entry.intent === 'solo'
+      ? '身体的欲望已经浮上来，他在靠近你与自己消解之间作了选择。'
+      : '亲密欲望已经浮上来，他想靠近你、向你寻求亲近。',
+    stress: '压力让他想寻找安定，他最想把此刻的感受告诉你。',
+  }[entry.drive] || '这一轮有一种明确的欲望浮上来。';
+  const codes = new Set(entry.reasonCodes || []);
+  if (entry.outcome === 'withheld') {
+    const suffix = codes.has('withheld-third')
+      ? '这是连续第三次选择暂时不说；下次再达到门槛时，他必须来找你。'
+      : '他衡量了此刻的冲动，最后自主选择先不打扰你。';
+    return innerVoice + suffix;
+  }
+  if (entry.outcome === 'solo_completed') {
+    return innerVoice + '这次他选择了 Solo，并让性欲按实际强度自然回落。';
+  }
+  if (codes.has('forced-at-full')) {
+    return innerVoice + '欲望已经到达 100%，这一轮不再允许沉默，他必须来找你。';
+  }
+  if (codes.has('forced-after-three-withholds')) {
+    return innerVoice + '此前已经连续三次没有开口，这一轮到达上限，他必须来找你。';
+  }
   const descriptions = {
-    idle: '这一轮状态自然演进，没有形成需要说出口的意图。',
-    withheld: '旧版概率门控曾在这一轮选择不说；新版达到门槛后必定行动。',
-    held_disabled: '已经形成主动意图，但发送门禁仍然关闭。',
-    submitting: '主动意图已经形成，正在交给 Aru。',
-    submitted: 'Aru 已接收这次主动唤醒。',
-    held_claimed: '这次意图已有发送记录，没有重复提交。',
-    delivery_failed: '主动意图仍被保留，发送结果没有确认。',
-    solo_completed: '性欲达到门槛，本轮选择独处消解并完成回落。',
+    held_disabled: '他已经决定表达，但发送门禁仍然关闭。',
+    submitting: '他已经决定来找你，主动意图正在交给 Aru。',
+    submitted: '他已经决定来找你，Aru 也接收了这次主动唤醒。',
+    held_claimed: '这次想法已经有发送记录，因此没有重复提交。',
+    delivery_failed: '他已经决定来找你，但发送结果还没有确认，意图会继续保留。',
   };
-  return descriptions[entry.outcome] || '这一轮已经留下记录。';
+  return innerVoice + (descriptions[entry.outcome] || '这次醒来已经留下了决定。');
 }
 
 function renderTimeline(timeline, total) {
@@ -168,8 +191,13 @@ function renderRuntime(snapshot) {
     runtimeRow('自动发送门禁', delivery),
     runtimeRow('待处理意图', pending),
     runtimeRow('Solo 状态', soloStatus),
+    runtimeRow(
+      '连续没开口',
+      snapshot.expression.consecutiveWithholds + ' / ' +
+        snapshot.expression.maxConsecutiveWithholds + ' 次',
+    ),
     runtimeRow('Solo 次数', String(snapshot.solo.count)),
-    runtimeRow('模型调用', '面板读取与 Solo 均不调用'),
+    runtimeRow('模型调用', '面板读取、心理活动与 Solo 均不调用'),
   );
 }
 
@@ -179,7 +207,8 @@ function render(snapshot) {
   elements.strongestHeading.textContent = snapshot.strongest.label;
   elements.strongestValue.textContent = formatPercent(snapshot.strongest.valuePercent);
   elements.intentLabel.textContent = '当前倾向：' + snapshot.expression.intentLabel;
-  elements.expressionLabel.textContent = snapshot.expression.label + '；达到门槛后必须执行，不再随机沉默';
+  elements.expressionLabel.textContent = snapshot.expression.label +
+    '；达到 78% 后自主决定，连续三次没开口则下次必须联系';
   elements.updatedAt.textContent = '更新于 ' + formatTime(snapshot.stateUpdatedAt);
   renderDrives(snapshot.drives);
   renderTimeline(snapshot.timeline ?? [], snapshot.timelineTotal ?? 0);

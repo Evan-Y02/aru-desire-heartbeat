@@ -69,13 +69,15 @@ test('self-drive variation is bounded and reproducible', () => {
   assert.ok(first <= 1 + config.selfDriveVariation);
 });
 
-test('reaching the threshold always forms an action decision', () => {
+test('reaching the threshold permits an autonomous action decision', () => {
+  const expressive = structuredClone(config);
+  expressive.expression.baseWillingness = 1;
   const atThreshold = stateWith({ attachment: config.triggerThreshold, fatigue: 0.10 });
-  const result = decideState(atThreshold, config, NOW);
+  const result = decideState(atThreshold, expressive, NOW);
   assert.ok(result.decision);
   assert.equal(result.decision.drive, 'attachment');
   assert.equal(result.decision.intent, 'reach_owner');
-  assert.equal(result.expression, null);
+  assert.equal(result.expression.expressed, true);
   assert.equal(result.state.drives.attachment, config.triggerThreshold);
 });
 
@@ -88,6 +90,7 @@ test('remaining below threshold does not form a decision', () => {
 
 test('libido deterministically chooses exactly one real outlet', () => {
   const soloConfig = structuredClone(config);
+  soloConfig.expression.baseWillingness = 1;
   soloConfig.solo.basePreference = 1;
   soloConfig.solo.libidoOverAttachmentWeight = 0;
   soloConfig.solo.afterContactBonus = 0;
@@ -105,6 +108,7 @@ test('libido deterministically chooses exactly one real outlet', () => {
 
 test('solo satisfaction is proportional, counted, and cooled down', () => {
   const soloConfig = structuredClone(config);
+  soloConfig.expression.baseWillingness = 1;
   soloConfig.solo.basePreference = 1;
   soloConfig.solo.libidoOverAttachmentWeight = 0;
   soloConfig.solo.afterContactBonus = 0;
@@ -223,14 +227,16 @@ test('thoughts decay when their drive falls and never feed the drive', () => {
 });
 
 test('successful expression proportionally weakens its automatic thought', () => {
+  const expressive = structuredClone(config);
+  expressive.expression.baseWillingness = 1;
   const formed = tickState(
-    stateWith({ attachment: config.triggerThreshold, fatigue: 0.10 }),
-    config,
+    stateWith({ attachment: 0.80, fatigue: 0.10 }),
+    expressive,
     NOW,
   );
   assert.equal(formed.state.thoughts[0].type, 'fixation');
   const before = formed.state.thoughts[0].intensity;
-  const satisfied = satisfyDecision(formed.state, config, formed.decision.id, NOW + 1);
+  const satisfied = satisfyDecision(formed.state, expressive, formed.decision.id, NOW + 1);
   assert.equal(satisfied.thoughts.length, 1);
   assert.equal(satisfied.thoughts[0].type, 'flit');
   assert.ok(Math.abs(
@@ -372,10 +378,11 @@ test('CLI accepts user-facing percentages and saves atomically', async () => {
   ], io));
 });
 
-test('loading a legacy state adds only the empty solo state in memory', async () => {
+test('loading a legacy state adds empty solo and expression state in memory', async () => {
   const directory = await secureTemp();
   const legacy = createInitialState(config, NOW);
   delete legacy.solo;
+  delete legacy.expression;
   await writeFile(
     path.join(directory, 'state.json'),
     JSON.stringify(legacy) + '\n',
@@ -388,6 +395,7 @@ test('loading a legacy state adds only the empty solo state in memory', async ()
     refractoryUntil: null,
     lastLibidoChoice: null,
   });
+  assert.deepEqual(loaded.expression, { consecutiveWithholds: 0 });
   assert.deepEqual(loaded.drives, legacy.drives);
   assert.equal(loaded.sequence, legacy.sequence);
 });

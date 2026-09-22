@@ -137,9 +137,11 @@ runuser -u aru-desire -- /usr/bin/node "$TARGET/bin/desire-heartbeat.mjs" rebase
 node -e 'const fs=require("fs"),a=JSON.parse(fs.readFileSync(process.argv[1])),
  b=JSON.parse(fs.readFileSync(process.argv[2]));
  const defaultSolo={count:0,lastSoloAt:null,refractoryUntil:null,lastLibidoChoice:null};
+ const defaultExpression={consecutiveWithholds:0};
  for(const x of [a,b]) {
    for(const k of ["sequence","updatedAt","lastTickAt"]) delete x[k];
    if(x.solo===undefined) x.solo=structuredClone(defaultSolo);
+   if(x.expression===undefined) x.expression=structuredClone(defaultExpression);
  }
  if(JSON.stringify(a)!==JSON.stringify(b)) process.exit(1);
 ' "$ATTEMPT/state.json" "$DATA/state.json" ||

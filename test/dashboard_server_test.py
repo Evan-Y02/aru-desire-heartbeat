@@ -100,11 +100,14 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual(result["strongest"]["drive"], "attachment")
         self.assertEqual(result["strongest"]["valuePercent"], 72)
         self.assertEqual(result["expression"]["intent"], "reach_owner")
+        self.assertEqual(result["expression"]["consecutiveWithholds"], 0)
+        self.assertEqual(result["expression"]["maxConsecutiveWithholds"], 3)
         self.assertEqual(result["thoughts"][0]["text"], state["thoughts"][0]["text"])
         self.assertEqual(result["thoughts"][0]["sourceLabel"], "自然形成")
         self.assertEqual(result["timelineTotal"], 1)
         self.assertEqual(result["timeline"][0]["outcomeLabel"], "来找你了")
         self.assertEqual(result["timeline"][0]["reasons"], ["Aru 已接收"])
+        self.assertEqual(result["timeline"][0]["reasonCodes"], ["delivery-accepted"])
         self.assertEqual(len(result["timeline"][0]["drives"]), 8)
         self.assertTrue(result["solo"]["enabled"])
         self.assertEqual(result["solo"]["count"], 0)
@@ -153,6 +156,21 @@ class DashboardTests(unittest.TestCase):
         entry["reasons"] = ["untrusted-reason"]
         with self.assertRaisesRegex(ValueError, "timeline reasons are invalid"):
             dashboard.timeline_view(entry)
+
+    def test_autonomous_silence_and_local_psychology_are_visible(self):
+        entry = copy.deepcopy(fixture_state()["timeline"][0])
+        entry.update({
+            "outcome": "withheld",
+            "reasons": ["expression-withheld", "withheld-third"],
+        })
+        view = dashboard.timeline_view(entry)
+        self.assertEqual(view["outcomeLabel"], "暂时没开口")
+        self.assertEqual(view["reasonCodes"], ["expression-withheld", "withheld-third"])
+        script = (self.public / "app.js").read_text(encoding="utf-8")
+        self.assertIn("这是连续第三次选择暂时不说", script)
+        self.assertIn("此前已经连续三次没有开口", script)
+        self.assertIn("欲望已经到达 100%", script)
+        self.assertIn("心理活动与 Solo 均不调用", script)
 
     def test_solo_timeline_and_cooldown_are_visible(self):
         state = fixture_state()

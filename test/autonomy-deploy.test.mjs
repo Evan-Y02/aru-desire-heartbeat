@@ -30,6 +30,7 @@ test('autonomy enable rebases safely before opening every gate', async () => {
   assert.match(source, /installed systemd unit differs from source; upgrade first/);
   assert.match(source, /rebase-clock/);
   assert.match(source, /clock rebase changed protected state content/);
+  assert.match(source, /defaultExpression=\{consecutiveWithholds:0\}/);
   assert.match(source, /x\.observeOnly=false;x\.deliveryEnabled=true/);
   assert.match(source, /x\.enabled=true/);
   assert.match(source, /aru-desire-heartbeat-external-trigger-v1/);
