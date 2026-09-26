@@ -1,239 +1,283 @@
-# Aru Desire Heartbeat
+# Desire heartbeat — autonomous v2 with lightweight thought formation
 
-一个给 AI companion / 角色型助手使用的轻量欲望状态机。
+This is a local, dependency-free Node.js 22 desire engine for Aru. Every heartbeat
+updates eight bounded drives and a persistent thought pool, then may create one of
+four outbound intents or one local Solo intent. The engine does not search, browse, start Codex, call a
+model, read conversations, or use an MCP. A separate cycle command can submit a
+pending intent through Aru's encrypted external-trigger bridge. The committed
+configuration and all deployment assets remain disabled by default.
 
-它在模型外维护八维连续状态，通过低频心跳推进欲望；达到阈值后自主决定表达、Solo 或暂时沉默。系统本身不读聊天记录、不调用模型、不使用 MCP，也不会把“欲望”伪装成用户消息。Aru 用户可以通过可选的加密 External Trigger 适配器，让手机端结合原有对话上下文生成真正的回复。
+An optional local complete-message interpreter and independent arousal body
+state are implemented behind disabled feature gates. They make no model or
+API call. The complete-message hook and loopback receiver accept only persisted
+user turns and completed assistant finals, authenticate requests with owner-only
+secret files, and deduplicate stable event IDs. See `CHAT_AROUSAL_DESIGN.md` and
+`COMPLETE_MESSAGE_HOOK_DESIGN.md` for the boundary, private state layout,
+installation checks, and rollback behavior.
 
-> 这是经过真实运行验证后整理出的公开版。仓库已移除私人域名、账号、路径、凭据、聊天内容和人物专名。
+The optional Solo Session layer separates autonomous selection from preparation,
+structured action beats, edge, release/no-release completion, and downstream
+settlement. It is also disabled by default. See `SOLO_SESSION_DESIGN.md`.
 
-## 它解决什么
+## 0.9.7
 
-传统提示词只能写“你现在想念用户”，没有连续状态，也无法随时间积累、满足和回落。本项目把这部分做成一个小型、可审计的状态机：
+Version 0.9.7 adds bounded chat stimulus, independent Arousal state and
+release-to-drive settlement, plus the authenticated complete-message hook and
+loopback receiver. Stable event IDs provide local and receiver-side
+deduplication. The installer verifies the synthetic receive/replay path and
+restores the previous release, configuration, units, owner-only hook secrets,
+interaction data, and service activity on failure while reporting every failed
+rollback step. Startup and diagnostic output redact token and secret material.
+Solo Sessions remain disabled by default.
 
-- 八维驱力：依恋、好奇、反思、责任、社交、疲劳、性欲、压力；
-- 真正的零下限，没有隐藏的 20% 保底；
-- 时间只会自然增加依恋、好奇、社交和性欲；
-- 反思、责任、疲劳、压力需要明确事件触发，没有事件时自然回落；
-- 55% 可形成浮念，80% 可升级为执念；
-- 达到 78% 后进入自主表达选择，可以联系、Solo 或暂时沉默；
-- 连续沉默最多三次，第四个符合条件的心跳必须联系；达到 100% 也必须联系；
-- 性欲可以在“联系重要的人”和本地 Solo 之间作确定性选择；
-- 表达或 Solo 后按比例满足，不会粗暴清零或回到固定值；
-- 一次只允许一个待处理决定，并用 claim/receipt 防止重复发送；
-- 手机端回复生成与服务器状态机彻底分离。
+## Development setup
 
-## 架构
-
-```text
-时间 / 显式事件
-      ↓
-Desire Engine（纯状态转换）
-      ↓
-Drive + Thought + Expression Choice
-      ├── Silence：保留数值，等待后续心跳
-      ├── Solo：本地完成并按比例满足
-      └── Outbound Intent
-              ↓
-      可选 Aru External Trigger
-              ↓
-      手机端用原对话上下文生成回复
-```
-
-心跳只是检查和推进状态，不等于每十分钟发送消息。默认心跳为 600 秒，但实际表达时间由各驱力增长、波动、满足后的余量和阈值共同决定。普通未达门槛的心跳不会写入时间线；达到门槛的醒来才记录本地派生的心理活动与决定，不调用模型。三次沉默只是上限，并不强制系统先沉默三次。
-
-## 安全默认值
-
-仓库提交的配置默认：
-
-- `observeOnly: true`
-- `deliveryEnabled: false`
-- External Trigger `enabled: false`
-- 不附带任何凭据
-- 不自动初始化生产状态
-- 不自动启动 systemd timer
-- Dashboard 只读并仅监听 `127.0.0.1:18760`
-
-因此，克隆和运行测试不会向任何人发送消息。
-
-## 环境要求
-
-- Linux 或 macOS（核心 CLI）
-- Node.js 22+
-- Python 3（Dashboard 与其测试）
-- systemd（仅生产部署）
-- Aru Self-Hosted + External Trigger sender bundle（仅 Aru 主动唤醒）
-
-核心没有 npm 运行时依赖。
-
-## 五分钟本地体验
+The committed `data/` directory is intentionally empty. Initialization is always
+explicit and refuses to replace an existing state:
 
 ```bash
-git clone https://github.com/Evan-Y02/aru-desire-heartbeat.git
-cd aru-desire-heartbeat
-npm test
-
 node bin/desire-heartbeat.mjs init
+```
+
+This creates `data/state.json` as mode `0600`; `data/` must be a real, owner-owned
+`0700` directory. A corrupt, insecure, or symbolic-link state is rejected rather
+than repaired or overwritten.
+
+Read the redacted status without changing it:
+
+```bash
 node bin/desire-heartbeat.mjs status
+```
+
+Run one real-time state heartbeat manually:
+
+```bash
 node bin/desire-heartbeat.mjs tick
 ```
 
-默认数据写入仓库内的 `data/`。初始化会拒绝覆盖已有状态，也会拒绝不安全的符号链接和权限。
+Before enabling a previously paused installation, `rebase-clock` moves only the
+heartbeat time anchor to now. It refuses pending decisions and preserves all eight
+drives, thoughts, timeline entries, satisfaction records, and relationship state:
 
-手动调整某个驱力：
+```bash
+node bin/desire-heartbeat.mjs rebase-clock
+```
+
+Manage one drive with user-facing percentages. `set-drive` assigns an exact
+`0–100` value; `adjust-drive` adds or subtracts a non-zero amount and clamps the
+result to that range:
 
 ```bash
 node bin/desire-heartbeat.mjs set-drive --drive attachment --value 65
-node bin/desire-heartbeat.mjs adjust-drive --drive libido --delta 10
-node bin/desire-heartbeat.mjs feed --drive curiosity --amount 0.20
+node bin/desire-heartbeat.mjs adjust-drive --drive attachment --delta -15
 ```
 
-添加一条浮念并查看决定：
+Both commands take the existing exclusive lock and atomically save only the
+requested drive. They refuse to run while a decision is pending, so an already
+formed outbound event cannot silently change underneath delivery. Raising a value
+does not send a message immediately; it only changes what a later heartbeat can
+consider. These commands call no model or MCP and consume no model tokens.
+
+Add a bounded internal stimulus or a thought. Arguments are parsed as data and
+are never assembled into a shell command:
 
 ```bash
-node bin/desire-heartbeat.mjs thought-add \
-  --drive attachment --type flit --intensity 0.55 \
-  --text "想靠近重要的人"
+node bin/desire-heartbeat.mjs feed --drive curiosity --amount 0.20
+node bin/desire-heartbeat.mjs thought-add --drive attachment --type flit --intensity 0.55 --text "想靠近月"
+```
 
+Ask the sentinel to choose without applying elapsed-time growth:
+
+```bash
 node bin/desire-heartbeat.mjs decide
 ```
 
-所有文本都按数据处理，不会拼接成 shell 命令。
+Complete a pending decision only with its exact ID:
 
-## 不写盘模拟
+```bash
+node bin/desire-heartbeat.mjs satisfy --decision-id decision-EXACT-ID
+```
+
+This reduces the associated drive, records satisfaction time, and clears the
+pending decision. It never claims that a message was delivered.
+
+Run a deterministic simulation from the current persisted state. Both modes use
+a memory clone and never write state or contact Aru. `simulate-autonomy` assumes
+each simulated contact succeeds so growth can continue across many days:
 
 ```bash
 node bin/desire-heartbeat.mjs simulate --ticks 48
 node bin/desire-heartbeat.mjs simulate-autonomy --ticks 1008
 ```
 
-模拟使用内存副本，不修改 `state.json`，也不会调用 Aru。第二条命令假设每次表达都成功，用于观察长期频率、间隔和数值回落。
+Every command also accepts `--config ABSOLUTE_OR_RELATIVE_PATH` and `--data-dir
+PATH`. A state-changing command uses an exclusive `heartbeat.lock`; the lock and
+state are mode `0600`.
 
-## 八维驱力
+## Behavior
 
-| Drive | 含义 | 时间自然增长 |
-| --- | --- | --- |
-| `attachment` | 想靠近重要的人 | 是 |
-| `curiosity` | 想探索、了解 | 是 |
-| `reflection` | 整理明确经历 | 否 |
-| `duty` | 未完成事项的牵挂 | 否 |
-| `social` | 想交流、观察外界 | 是 |
-| `fatigue` | 疲劳、需要休息 | 否 |
-| `libido` | 身体性亲密欲望 | 是 |
-| `stress` | 压力与退避需要 | 否 |
+Drives are `attachment`, `curiosity`, `reflection`, `duty`, `social`, `fatigue`,
+`libido`, and `stress`. Duty and fatigue remain internal state. The actionable drives map to
+`reach_owner`, `seek_closeness`, `share`, or `confide`; libido may instead choose
+the local `solo` outlet. Below threshold means no action. The names are motivations, not generated messages or commands.
 
-所有数值都在 `0..1` 内。公开配置是一个可运行起点，不是人格真理；请先用模拟和只观察模式校准，再开启外部动作。
+Each drive has its own base growth rate. A small bounded, reproducible self-drive
+variation changes the rate at each heartbeat, so contact timing emerges from state
+rather than a fixed message schedule. At 55%, a drive creates one allowlisted
+automatic flit. Continued drive growth reinforces that same thought without
+duplicates; at 80% it becomes a fixation. If the drive falls, the thought decays,
+and successful expression or Solo proportionally weakens it. Thoughts observe
+drive state but never add value back into a drive, preventing a self-amplifying
+loop. Manual thoughts remain supported and are explicitly marked. The sentinel
+checks clock safety, one-pending-intent deduplication, fatigue, threshold,
+observe-only state, and explicit delivery flags.
 
-## 浮念与执念
+At 78%, the strongest actionable drive enters a deterministic local expression
+choice: it may contact, choose Solo when libido is eligible, or remain silent.
+Silence is a real autonomous choice and does not satisfy or lower any drive. It
+may happen at most three eligible times in a row; the fourth eligible cycle must
+contact the owner. A drive at 100% must also contact immediately. These are
+upper safety bounds, not a schedule and not a rule that forces three silences.
 
-自动浮念只保存类型、驱力、强度、时间和允许的短标签，不保存原始聊天正文。
+For libido, the local state machine chooses exactly one of two outlets:
+`seek_closeness` wakes Aru to contact the wife, while `solo` uses the existing
+local completion path when the optional Solo Session gate is disabled. With that
+gate enabled, selection instead creates a pending private Session and waits for
+one authorized autonomous-check model final; it never adds a per-message model
+call. The Session adapter validates structured action beats before applying them
+to Arousal. A valid Solo release retains 38% of libido and starts the existing
+three-hour Solo cooldown. Contact retains 70% of libido. The deterministic
+choice is influenced by libido versus attachment, fatigue, and the previous
+outlet. Solo remains optional on ordinary eligible cycles, but cannot replace
+the mandatory owner contact at 100% or after three consecutive autonomous
+silences.
 
-- 驱力达到 `thoughts.autoCreateAbove`（默认 0.55）时形成浮念；
-- 同一驱力继续升高时强化同一条，不制造重复；
-- 达到 `thoughts.autoFixationAbove`（默认 0.80）时升级为执念；
-- 驱力下降时自然衰减；
-- 成功表达或 Solo 后，相关念头按比例减弱；
-- 念头观察驱力，但不反向增加驱力，避免自激循环。
+There are no fixed quiet hours, daily message quota, minimum interval, maximum
+interval, or fixed cooldown. A successful submission lowers the triggering drive
+and softly lowers the other outbound drives, which prevents an immediate cluster
+without turning desire into a schedule. Current disabled defaults were calibrated
+by offline simulation across several 30-day start times: first contact about
+110–130 minutes, around 13.8 expressed contacts per day, and a 90-minute median
+follow-up gap. These are observations rather than quotas or time promises; rare
+shorter and longer gaps remain possible.
 
-## Solo
+## Read-only private dashboard
 
-当性欲成为主导驱力时，系统只在两种出口中选择：
+The optional dashboard presents the eight drives, strongest current tendency,
+thought summaries with natural/manual provenance, pending intent, heartbeat
+recency, Solo count/cooldown, the consecutive-silence counter, and a bounded
+decision timeline in a mobile-first page. Ordinary below-threshold heartbeats do
+not add timeline noise. Every threshold-eligible wake records a more concrete,
+locally derived inner-state explanation without calling a model or copying chat. Solo completion appears as
+“自己处理了”. Each cycle records only allowlisted outcomes, reasons, intent
+metadata, and a snapshot of the eight derived values; it never copies raw
+conversation text into the timeline. The newest 72 entries are retained and the
+dashboard shows the newest 10.
 
-1. `seek_closeness`：形成外部意图，通过 Aru 联系重要的人；
-2. `solo`：完全在本地状态机中完成。
-
-Solo 不调用模型、API、Codex 或 MCP，也不生成或保存私密正文。选择由性欲相对依恋的强度、疲劳、上一次出口、冷却和可配置偏好共同决定。完成后保留一定余量并进入冷却，不会重置为固定值。达到 100% 或连续三次沉默后的强制轮次不能用 Solo 替代联系。
-
-## 只读 Dashboard
+It binds only to `127.0.0.1:18760`, exposes only allowlisted GET/HEAD routes, sets
+strict no-cache and browser security headers, and never writes state. Untrusted
+thought text is inserted with `textContent`, never interpreted as markup.
 
 ```bash
 python3 -I dashboard/server.py
 ```
 
-打开 `http://127.0.0.1:18760` 可查看：
+The included service unit adds a read-only filesystem boundary around the state
+directory. The application intentionally implements no public authentication;
+HTTPS and authentication must be applied by the reverse proxy before exposure.
+The visible management button remains disabled in this version. Reading or
+refreshing the page calls no model or MCP and consumes no model tokens.
 
-- 八维数值与当前最强倾向；
-- 只记录达到门槛的醒来与具体本地心理活动；
-- 连续沉默次数与强制联系原因；
-- 浮念与执念；
-- 待处理决定；
-- Solo 次数和冷却；
-- 运行状态。
+## Prepared autonomous cycle
 
-Dashboard 不写状态、不调用模型。若要暴露到公网，请自行在 Caddy/Nginx 前增加 HTTPS 与认证，参见 [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)。
+`bin/desire-cycle.mjs` performs one bounded cycle: advance state, persist any
+pending intent, and—only when every explicit gate is enabled—submit it through
+Aru's external-trigger path. The prepared ten-minute timer invokes this command.
+`bin/desire-deliver.mjs` remains available for controlled recovery or diagnostics.
 
-## Aru 接入
+The adapter turns one pending desire decision into a bounded
+`xinchao.desire-external-event.v1` background event. The event explicitly says
+that it is not user-authored and carries the triggering drive, score,
+`wantAction`, all drive values, and up to eight related thoughts. Aru is expected
+to route it as an automatic trigger into the latest conversation, where the
+collaborator reads Aru memory and decides how to respond.
 
-Aru 接入是可选层。核心引擎也可以单独使用，或由你实现自己的 transport。
+Delivery requires every gate at once: heartbeat observation must be disabled,
+both delivery flags must be enabled, an exact-content enable file must exist, and
+an owner-only external-trigger send credential must exist. Every decision is
+claimed before submission; accepted or uncertain claims are never retried
+automatically.
 
-公开版保留了经实测的 Aru sender：
+The sender follows Aru Host v0.30.2's official `wake-send.mjs` protocol:
+`aru.wake-bridge.payload.v2` plaintext is sealed with AES-256-GCM using a fresh
+12-byte nonce, then submitted inside `aru.wake-bridge.sealed-event.v1` with the
+bundle's submit-only bearer token. Submission uses Node's native HTTPS client,
+not Fetch/Undici, so it remains compatible with the service's `--jitless` boundary. Desire event JSON is carried as background
+`content`; no collaborator or conversation identifier is supplied by the VPS.
+The default configuration cannot deliver.
 
-- 读取 owner-only sender bundle；
-- 使用 AES-256-GCM 密封事件；
-- 只发送派生状态和意图，不发送聊天正文；
-- Host 接受后才按比例满足欲望；
-- 每个 decision 先落 claim，避免重启后重复提交；
-- 不自动重试已接受或结果不确定的请求。
+## Drive dynamics
 
-详细步骤见 [ARU_INTEGRATION.md](ARU_INTEGRATION.md)。
+All eight drives have a true zero lower bound and no hidden floor. Time alone
+raises only `attachment`, `curiosity`, `social`, and `libido`. `reflection`,
+`duty`, `fatigue`, and `stress` require an explicit feed or a matching thought;
+without one they settle toward zero. A successful expression lowers the selected
+drive proportionally rather than resetting it, retaining continuity and aftertone.
+The engine remains deterministic and makes no model or conversation call.
 
-## 生产部署
+On narrow screens the eight drive cards use a compact two-column, four-row grid
+so the timeline begins immediately after the complete snapshot.
 
-先阅读 [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)。最重要的原则是：
-
-1. 先跑测试；
-2. 先以 observe-only 运行；
-3. 用历史参数模拟；
-4. 独立创建低权限系统用户；
-5. 单独放置 `0600` 凭据；
-6. 最后才显式打开 delivery 和 timer。
-
-安装脚本从自身所在仓库推导源码路径，不含作者机器路径。安装时不会自动启用自主发送。
-
-## 配置入口
-
-主要配置在：
-
-- `config/default.json`：心跳、阈值、增长、回落、满足、Solo、Thought；
-- `config/aru-delivery.json`：Aru sender 的开关和受保护文件路径；
-- `systemd/`：一次性心跳服务、timer 和 Dashboard 服务。
-
-常见调整：
-
-| 目标 | 配置 |
-| --- | --- |
-| 心跳检查频率 | `heartbeatSeconds` |
-| 必须表达阈值 | `triggerThreshold` |
-| 各驱力增长速度 | `driveGrowthPerHour` |
-| 事件型驱力回落速度 | `driveReturnPerHour` |
-| 表达后保留多少 | `satisfactionCarryoverFactor` |
-| Solo 偏好与冷却 | `solo.*` |
-| 浮念/执念阈值 | `thoughts.*` |
-
-## 隐私边界
-
-- 不读取聊天记录；
-- 不保存原始用户消息；
-- 不把用户文本当系统指令；
-- 不把内部事件伪装成用户发言；
-- 不在日志打印 sender bundle；
-- 状态文件、凭据和 claim 都要求严格权限；
-- Dashboard 只输出 allowlist 字段；
-- 开源仓库不包含任何真实生产状态或私密内容。
-
-## 测试
+## Tests
 
 ```bash
-npm test
+node --test
 ```
 
-测试使用临时目录和 mock HTTP，不访问真实 Aru、凭据、服务或对话。
+Tests use temporary directories and mock HTTP responses only. They do not touch
+Aru data, credentials, services, or conversations.
 
-## 项目状态
+## Prepared systemd assets
 
-当前公开基线：`0.9.5`。
+`systemd/` and `scripts/` are deployment material only; nothing is installed by
+this project build. The timer runs a oneshot service rather than a resident loop.
+The installer requires a pre-created low-privilege `aru-desire` account, installs
+atomically, retains attempt backups, and does not initialize state automatically.
+The timer waits five minutes from activation before its first cycle and does not
+catch up missed runs. The oneshot runs Node with `--jitless` so the service can
+retain `MemoryDenyWriteExecute=yes`.
 
-它已经包含核心状态机、阈值必表达、比例满足、Solo、浮念/执念、只读 Dashboard、Aru 加密唤醒和故障恢复。参数仍应根据你自己的角色关系、消息容忍度和运行环境调整。
+An existing disabled installation can be replaced with
+`scripts/upgrade-once.sh --apply`. The upgrader refuses to continue unless both
+the timer and service are inactive, keeps persistent state and credentials in
+place, atomically updates the disabled systemd units, verifies state, credentials,
+and unit files, and prints the exact backup-specific rollback command. It never
+enables the timer or delivery.
 
-## License
+After the upgraded source and installed versions match,
+`scripts/enable-autonomy-once.sh --apply` validates the private sender credential
+without printing it, verifies both Aru Host manifests, backs up configuration and
+state, rebases the heartbeat clock without growth, opens all three delivery gates,
+and enables the timer. Any failure returns the system to disabled state.
+`scripts/disable-autonomy-once.sh --apply` stops future cycles and closes delivery
+while preserving evolved state. The enable command also prints an exact rollback
+command that restores the pre-activation state.
 
-MIT。请保留许可证与安全说明；不要把真实凭据、聊天正文或私人记忆提交到 fork。
+A narrowly scoped `scripts/recover-stalled-delivery-once.sh --apply` handles the
+specific case where a local pre-network crash left both a dead-process lock and
+an unsubmitted claim. It requires the timer to be disabled, validates the pending
+decision and matching claim, backs up all recovery evidence, submits exactly once,
+settles the timeline and proportional satisfaction, and leaves the timer disabled.
+Any ambiguous retry failure remains closed for manual inspection.
+
+## Committed safety defaults
+
+- heartbeat observation and both delivery flags are committed as false;
+- chat stimulus, arousal, and arousal-to-libido settlement are committed as false;
+- generated Solo Sessions are committed as false;
+- activation always requires the explicit root-only enable script;
+- the exact-content enable file is created only during confirmed activation;
+- the core runtime still contains no browsing, MCP, model, or Codex invocation;
+- the timer and delivery remain off after installation or upgrade.
+
+See `ARU_INTEGRATION.md` for the source-backed integration boundary.

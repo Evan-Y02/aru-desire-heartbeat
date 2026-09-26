@@ -158,6 +158,34 @@ test('a solo cycle completes locally without calling the sender', async () => {
   assert.equal((await readdir(directory)).includes('delivery-attempts'), false);
 });
 
+test('enabled Solo Sessions preserve selection without treating it as release', async () => {
+  const directory = await tempDirectory();
+  const heartbeatConfig = liveHeartbeat();
+  heartbeatConfig.soloSessionsEnabled = true;
+  heartbeatConfig.solo.basePreference = 1;
+  heartbeatConfig.solo.libidoOverAttachmentWeight = 0;
+  heartbeatConfig.solo.afterContactBonus = 0;
+  heartbeatConfig.solo.afterSoloPenalty = 0;
+  heartbeatConfig.solo.fatigueWeight = 0;
+  const outbound = deliveryConfig(directory);
+  await initial(directory, heartbeatConfig, {
+    libido: 0.95, attachment: 0.20, fatigue: 0.10,
+  });
+  const result = await runHeartbeatCycle({
+    dataDirectory: directory,
+    heartbeatConfig,
+    deliveryConfig: outbound,
+    submitEvent: async () => assert.fail('Solo selection must not call the sender'),
+    nowMs: NOW + 600_000,
+  });
+  assert.equal(result.status, 'solo_selected');
+  assert.equal(result.soloGenerationRequired, true);
+  const saved = await loadState(directory, heartbeatConfig);
+  assert.equal(saved.drives.libido, saved.timeline[0].drives.libido);
+  assert.equal(saved.pendingDecision.intent, 'solo');
+  assert.equal(saved.solo.count, 0);
+});
+
 test('an uncertain submission is persisted and never sent twice', async () => {
   const directory = await tempDirectory();
   const heartbeatConfig = liveHeartbeat();

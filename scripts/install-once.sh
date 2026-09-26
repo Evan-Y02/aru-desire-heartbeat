@@ -4,7 +4,7 @@ set +x
 umask 077
 
 readonly MODE="${1:-}"
-readonly SOURCE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
+readonly SOURCE="/home/xinchao/private/ChengXiao/desire-heartbeat"
 readonly TARGET="/opt/aru-desire-heartbeat"
 readonly DATA="/var/lib/aru-desire-heartbeat"
 readonly UNIT_DIR="/etc/systemd/system"
@@ -12,7 +12,7 @@ readonly SERVICE="aru-desire-heartbeat.service"
 readonly TIMER="aru-desire-heartbeat.timer"
 readonly BACKUP_PARENT="/var/backups/aru-desire-heartbeat"
 readonly ACTIVE="/var/lib/aru-desire-heartbeat-install-active"
-readonly SOURCE_CREDENTIAL="${ARU_SEND_CREDENTIAL_FILE:-}"
+readonly SOURCE_CREDENTIAL="/home/xinchao/private/ChengXiao/secrets/desire-heartbeat/external-trigger.send-credential"
 readonly TARGET_CREDENTIAL="$DATA/external-trigger.send-credential"
 
 STAGE=""
@@ -74,10 +74,10 @@ preflight() {
       [[ -f "$UNIT_DIR/$unit" && ! -L "$UNIT_DIR/$unit" ]] || die "existing unit is unsafe"
     fi
   done
-  if [[ -n "$SOURCE_CREDENTIAL" ]]; then
-    [[ "$SOURCE_CREDENTIAL" == /* && -f "$SOURCE_CREDENTIAL" && ! -L "$SOURCE_CREDENTIAL" \
-      && "$(stat -c '%a:%h' "$SOURCE_CREDENTIAL")" == "600:1" ]] \
-      || die "ARU_SEND_CREDENTIAL_FILE must name an absolute, regular 0600 file"
+  if [[ -e "$SOURCE_CREDENTIAL" || -L "$SOURCE_CREDENTIAL" ]]; then
+    [[ -f "$SOURCE_CREDENTIAL" && ! -L "$SOURCE_CREDENTIAL" \
+      && "$(stat -c '%U:%a:%h' "$SOURCE_CREDENTIAL")" == "xinchao:600:1" ]] \
+      || die "source external-trigger credential is unsafe"
   fi
 }
 
@@ -129,7 +129,7 @@ mv -- "$STAGE" "$TARGET"
 STAGE=""
 TARGET_INSTALLED=1
 install -d -o aru-desire -g aru-desire -m 0700 "$DATA"
-if [[ -n "$SOURCE_CREDENTIAL" && -f "$SOURCE_CREDENTIAL" ]]; then
+if [[ -f "$SOURCE_CREDENTIAL" ]]; then
   if [[ -e "$TARGET_CREDENTIAL" || -L "$TARGET_CREDENTIAL" ]]; then
     [[ -f "$TARGET_CREDENTIAL" && ! -L "$TARGET_CREDENTIAL" \
       && "$(stat -c '%U:%G:%a:%h' "$TARGET_CREDENTIAL")" == "aru-desire:aru-desire:600:1" ]] \

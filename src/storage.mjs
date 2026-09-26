@@ -6,6 +6,55 @@ import { validateConfig, validateState, ValidationError } from './schema.mjs';
 
 export const STATE_FILE = 'state.json';
 
+const SAFE_FEATURE_DEFAULTS = Object.freeze({
+  chatStimulusEnabled: false,
+  arousalEnabled: false,
+  arousalDriveSettlementEnabled: false,
+  soloSessionsEnabled: false,
+  chatStimulus: {
+    decayTauSeconds: 21600,
+    windowSeconds: 3600,
+    ledgerMaxCount: 512,
+    pendingMaxCount: 24,
+    intimacyNoReleaseCarryoverFactor: 0.80,
+    singleCaps: {
+      attachment: 0.08, curiosity: 0.03, reflection: 0.08, duty: 0.08,
+      social: 0.06, fatigue: 0, libido: 0.10, stress: 0.08,
+    },
+    windowCaps: {
+      attachment: 0.20, curiosity: 0.08, reflection: 0.20, duty: 0.20,
+      social: 0.16, fatigue: 0, libido: 0.24, stress: 0.20,
+    },
+  },
+  arousal: {
+    tauSeconds: 1800,
+    gain: 0.20,
+    charged: 0.40,
+    edge: 0.88,
+    ponr: 0.96,
+    refractoryMinSeconds: 60,
+    refractoryMaxSeconds: 120,
+    reserveRecoverySeconds: 10800,
+    passiveContactCap: 0.72,
+    ledgerMaxCount: 512,
+    releaseCarryoverFactor: 0.30,
+  },
+});
+
+function normalizeConfig(config) {
+  for (const key of [
+    'chatStimulusEnabled', 'arousalEnabled', 'arousalDriveSettlementEnabled',
+    'soloSessionsEnabled',
+  ]) config[key] ??= SAFE_FEATURE_DEFAULTS[key];
+  config.chatStimulus ??= structuredClone(SAFE_FEATURE_DEFAULTS.chatStimulus);
+  config.arousal ??= structuredClone(SAFE_FEATURE_DEFAULTS.arousal);
+  config.solo.outputMultiplier ??= 0.80;
+  config.solo.reserveCostMultiplier ??= 0.80;
+  config.solo.sessionMaxCount ??= 24;
+  config.solo.maxActionBeats ??= 24;
+  return config;
+}
+
 function normalizeState(state) {
   if (state.solo === undefined) {
     state.solo = {
@@ -25,7 +74,7 @@ export async function loadConfig(configPath) {
   const text = await readFile(configPath, 'utf8');
   let config;
   try { config = JSON.parse(text); } catch { throw new ValidationError('configuration is not valid JSON'); }
-  return validateConfig(config);
+  return validateConfig(normalizeConfig(config));
 }
 
 export async function loadState(dataDirectory, config) {

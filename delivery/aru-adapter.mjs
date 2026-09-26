@@ -99,7 +99,7 @@ export function buildDesireEvent(state, nowMs = Date.now()) {
   const decision = state.pendingDecision;
   if (!decision) throw new DeliveryError('there is no pending decision', 'NO_PENDING_DECISION');
   return {
-    schema: 'aru.desire-heartbeat.event.v1',
+    schema: 'xinchao.desire-external-event.v1',
     eventId: decision.id,
     eventType: 'desire_threshold_reached',
     occurredAt: timePair(nowMs),
@@ -116,9 +116,9 @@ export function buildDesireEvent(state, nowMs = Date.now()) {
     drives: structuredClone(state.drives),
     relatedThoughts: relatedThoughts(state, decision.drive),
     guidance: [
-      '这是欲望系统产生的内部状态事件，不是用户发来的消息。',
-      '请读取 Aru 当前对话与记忆，结合时间、关系上下文和本次欲望自主决定如何主动联系用户。',
-      '不要复述事件数据，也不要声称用户刚刚发来了请求。',
+      '这是欲望系统产生的内部状态事件，不是解月发来的消息。',
+      '请读取 Aru 当前对话与记忆，结合时间、关系上下文和本次欲望自主决定如何主动联系解月。',
+      '不要复述事件数据，也不要声称解月刚刚发来了请求。',
     ],
   };
 }

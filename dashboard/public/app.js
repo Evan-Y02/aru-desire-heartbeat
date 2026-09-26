@@ -1,4 +1,11 @@
 const elements = {
+  loginView: document.querySelector('#login-view'),
+  appView: document.querySelector('#app-view'),
+  loginForm: document.querySelector('#login-form'),
+  username: document.querySelector('#username'),
+  password: document.querySelector('#password'),
+  loginError: document.querySelector('#login-error'),
+  logoutButton: document.querySelector('#logout-button'),
   livePill: document.querySelector('#live-pill'),
   liveLabel: document.querySelector('#live-label'),
   strongestHeading: document.querySelector('#strongest-heading'),
@@ -12,8 +19,33 @@ const elements = {
   timelineCount: document.querySelector('#timeline-count'),
   timelineList: document.querySelector('#timeline-list'),
   runtimeList: document.querySelector('#runtime-list'),
+  soloSessionPanel: document.querySelector('#solo-session-panel'),
+  soloSessionList: document.querySelector('#solo-session-list'),
   errorToast: document.querySelector('#error-toast'),
 };
+
+function showLogin() {
+  elements.appView.hidden = true;
+  elements.loginView.hidden = false;
+  elements.password.focus();
+}
+
+function showApp() {
+  elements.loginView.hidden = true;
+  elements.appView.hidden = false;
+}
+
+async function request(path, options = {}) {
+  const response = await fetch(path, { cache: 'no-store', ...options });
+  let payload = {};
+  try { payload = await response.json(); } catch { payload = {}; }
+  if (!response.ok) {
+    const error = new Error(payload.error || '请求失败');
+    error.status = response.status;
+    throw error;
+  }
+  return payload;
+}
 
 function text(tag, value, className) {
   const node = document.createElement(tag);
@@ -197,7 +229,29 @@ function renderRuntime(snapshot) {
         snapshot.expression.maxConsecutiveWithholds + ' 次',
     ),
     runtimeRow('Solo 次数', String(snapshot.solo.count)),
-    runtimeRow('模型调用', '面板读取、心理活动与 Solo 均不调用'),
+    runtimeRow('模型调用', '面板不调用；Solo 仅复用授权自主检查回合'),
+  );
+}
+
+function renderSoloSession(session) {
+  elements.soloSessionPanel.hidden = session === undefined;
+  if (session === undefined) return;
+  if (session === null) {
+    elements.soloSessionList.replaceChildren(runtimeRow('记录', '尚无已生成的 Solo Session'));
+    return;
+  }
+  const outcome = session.released ? '已射精' :
+    session.outcome === 'completed_no_release' ? '未射精结束' :
+      session.outcome === 'aborted' ? '已中止' : '进行中或停在 edge';
+  elements.soloSessionList.replaceChildren(
+    runtimeRow('时间', formatTime(session.time)),
+    runtimeRow('触发原因', session.triggerReason || '未记录'),
+    runtimeRow('当时想到', session.thought || '未记录'),
+    runtimeRow('过程摘要', session.processSummary || '未记录'),
+    runtimeRow('结果', outcome),
+    runtimeRow('高潮质量', session.climaxQualityLabel || '无'),
+    runtimeRow('射精量', session.outputLabel || '无'),
+    runtimeRow('事后念头', session.afterThought || '未记录'),
   );
 }
 
@@ -214,20 +268,63 @@ function render(snapshot) {
   renderTimeline(snapshot.timeline ?? [], snapshot.timelineTotal ?? 0);
   renderThoughts(snapshot.thoughts);
   renderRuntime(snapshot);
+  renderSoloSession(snapshot.soloSession);
 }
 
 async function refresh() {
   try {
-    const response = await fetch('/api/snapshot', { cache: 'no-store' });
-    if (!response.ok) throw new Error('snapshot unavailable');
-    render(await response.json());
+    render(await request('/api/snapshot'));
     elements.errorToast.hidden = true;
-  } catch {
+  } catch (error) {
+    if (error.status === 401) {
+      showLogin();
+      return;
+    }
     elements.errorToast.hidden = false;
     elements.livePill.classList.add('stale');
     elements.liveLabel.textContent = '读取失败';
   }
 }
 
-refresh();
-setInterval(refresh, 15000);
+elements.loginForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const button = elements.loginForm.querySelector('button');
+  button.disabled = true;
+  elements.loginError.textContent = '';
+  try {
+    await request('/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        username: elements.username.value,
+        password: elements.password.value,
+      }),
+    });
+    elements.password.value = '';
+    showApp();
+    await refresh();
+  } catch (error) {
+    elements.loginError.textContent = error.message || '没有打开面板。';
+  } finally {
+    button.disabled = false;
+  }
+});
+
+elements.logoutButton.addEventListener('click', async () => {
+  await request('/api/logout', { method: 'POST' }).catch(() => null);
+  showLogin();
+});
+
+async function start() {
+  const session = await request('/api/session').catch(() => ({ authenticated: false }));
+  if (session.username) elements.username.value = session.username;
+  if (session.authenticated) {
+    showApp();
+    await refresh();
+  } else {
+    showLogin();
+  }
+}
+
+start();
+setInterval(() => { if (!elements.appView.hidden) refresh(); }, 15000);

@@ -1,106 +1,109 @@
 # Aru external-trigger integration
 
-The desire engine is transport-independent. This optional adapter connects a
-pending outbound decision to Aru Self-Hosted's encrypted External Trigger bridge.
+Scope: source inspection of the installed Aru Self-Hosted
+`v0.30.2-pairing-hotfix1` release and the Aru UI supplied by the user. The
+desired runtime target is the Aru frontend app. GPT Work and Codex are deployment
+tools only and are not heartbeat targets or memory authorities.
 
-## Responsibility split
+The exported submit-only sender bundle was inspected locally with all secret
+values redacted. No authenticated API request, Aru state read, service action,
+conversation action, real event submission, or model call was performed.
 
-| Component | Responsibility |
-| --- | --- |
-| Desire engine | evolve drives, thoughts, Solo and pending decisions |
-| Aru adapter | build a bounded background event and enforce idempotency |
-| Aru Host | accept ciphertext and wake the registered mobile endpoint |
-| Aru mobile client | decrypt, select the bound collaborator/conversation and generate the reply |
+## Product decision
 
-The server supplies a motivation, not final prose. The phone remains authoritative
-for the collaborator, model, memory and target conversation.
+The desire system must not recreate the old Polaris fixed-time messages. The user
+does not want scheduled prompts. A heartbeat changes internal state; a desire
+decision may then wake the Aru collaborator at an unscheduled time.
 
-## Sender bundle
+The Aru external trigger is the selected integration:
 
-Export a submit-only sender bundle from Aru. It normally contains:
+- name: `欲望系统唤醒`;
+- receiving Host: `Aru Self-Hosted`;
+- message purpose: `自动触发`;
+- conversation mode: `跟随最新对话`.
 
-- schema `aru.wake-bridge.sender-bundle.v2`;
-- trigger ID;
-- HTTPS submit URL;
-- submit-only bearer token;
-- 32-byte encryption key.
+The event body is background context, not a user utterance. The awakened
+collaborator must read Aru conversation and memory, then decide naturally whether
+and how to contact 解月.
 
-Store the complete JSON as:
+## Source-proven wake-bridge boundary
+
+The Host manifest advertises `external-wake-bridge` with registration schema
+`aru.wake-bridge.registration.v2` and ciphertext-only content retention.
+
+A registered endpoint separates:
+
+- a submit token used only to submit events;
+- a fetch token used to retrieve and acknowledge events;
+- an encryption-key fingerprint;
+- an opaque official wake-relay route and wake token.
+
+The Host stores hashes for submit and fetch tokens. Event content enters the Host
+as a `sealedPayload`; the Host does not receive plaintext desire text.
+The Host endpoint accepts:
 
 ```text
-/var/lib/aru-desire-heartbeat/external-trigger.send-credential
+POST /aru/v1/wake-bridge/endpoints/{endpointId}/events
+Authorization: Bearer <submit token>
 ```
 
-Required ownership and mode:
+with a sealed envelope containing schema
+`aru.wake-bridge.sealed-event.v1`, a bounded `eventId`, and a bounded
+`sealedPayload`. Acceptance returns HTTP 202.
 
-```bash
-sudo chown aru-desire:aru-desire \
-  /var/lib/aru-desire-heartbeat/external-trigger.send-credential
-sudo chmod 0600 \
-  /var/lib/aru-desire-heartbeat/external-trigger.send-credential
-```
+Duplicate event IDs with identical ciphertext are idempotent. Reusing an event
+ID with different ciphertext is rejected. The Host limits one endpoint to 120
+admitted events per minute, returns at most 32 pending events per fetch, caps
+sealed payloads at 192 KiB, and prunes acknowledged history after 30 days while
+bounding total retained events.
 
-Never paste the bundle into an issue or commit it to Git.
+After admission, the Host sends only an HMAC-derived request ID to the official
+wake relay. It does not send the event plaintext to that relay.
 
-## Event contract
+## Mobile-authoritative behavior
 
-The adapter emits `aru.desire-heartbeat.event.v1`. It contains only:
+The source installed on the VPS proves the ciphertext bridge and notification
+path, but it does not contain the iOS implementation that decrypts an event and
+applies the locally bound collaborator, purpose, and conversation route. Those
+bindings are shown by the Aru UI and remain phone-authoritative.
 
-- decision ID, drive, intent and score;
-- structured `wantAction`;
-- the eight derived drive values;
-- up to eight related allowlisted thoughts;
-- `userAuthored: false`;
-- `purpose: automatic_trigger`.
+The exported credential is `aru.wake-bridge.sender-bundle.v2` and contains a
+trigger ID, HTTPS submit URL, submit-only token, and 32-byte encryption key. It
+was captured directly into an owner-only file and was never pasted into chat.
+The phone still owns collaborator, purpose, and latest-conversation routing.
 
-It does not contain chat history, collaborator ID, conversation ID or a model
-prompt copied from the user.
+## Rejected integration
 
-The guidance tells the awakened collaborator that this is an internal background
-event, not a new user message. The collaborator should read its own current
-conversation and memory, then respond naturally without reciting numeric state.
+The collaborator initiative subsystem and its
+`initiative/rules/{ruleId}/run` endpoint are not the desire-system transport.
+They model fixed one-time, daily, or interval proactive plans and require a broad
+paired-device bearer credential. No collaborator ID, initiative rule ID, or old
+Polaris schedule belongs in the external-trigger adapter.
+## Prepared adapter status
 
-## Encryption and submission
+The disabled-by-default autonomous cycle now:
 
-`delivery/aru-wake-sender.mjs`:
+- advances desire locally with per-drive growth and bounded reproducible variation,
+  then persists a pending decision before submission;
+- uses one-pending-decision and per-decision claims for deduplication;
+- preserves the fatigue gate and explicit delivery flags without fixed quiet
+  hours, a daily quota, or a fixed cooldown;
+- converts a pending decision into
+  `xinchao.desire-external-event.v1`;
+- marks the event `userAuthored: false` and `purpose: automatic_trigger`;
+- includes the triggering decision, all drive values, and up to eight related
+  thoughts;
+- requires an exact enable file and an owner-only send-credential file;
+- writes a per-decision claim before submission;
+- never automatically retries accepted or ambiguous attempts;
+- lowers desire only after the Host returns matching HTTP acceptance;
+- contains no initiative-rule lookup, hosted-reply dependency, or run request.
 
-1. validates the sender bundle;
-2. serializes the bounded event;
-3. seals it with AES-256-GCM and a fresh 12-byte nonce;
-4. submits `aru.wake-bridge.sealed-event.v1` to the credential URL;
-5. requires a matching event-ID acceptance.
+The separate sender now matches Aru Host v0.30.2's official
+`wake-send.mjs`: AES-256-GCM with a fresh 12-byte nonce, combined
+nonce/ciphertext/16-byte tag Base64 encoding, submit-token Bearer authorization,
+and matching event-ID acceptance checks. Tests decrypt the mock envelope and
+verify its complete payload without using the real credential or network.
 
-The plaintext desire event is not sent to the public relay.
-
-## Delivery gates
-
-All of these must be true:
-
-- heartbeat `observeOnly === false`;
-- heartbeat `deliveryEnabled === true`;
-- delivery config `enabled === true`;
-- exact-content enable file exists;
-- sender bundle exists and passes permission checks;
-- one pending non-Solo decision exists;
-- fatigue is below the configured gate.
-
-A decision is claimed on disk before network submission. Accepted or uncertain
-claims are not automatically retried. Desire is satisfied only after a matching
-acceptance response.
-
-## Activation
-
-See `docs/DEPLOYMENT.md`. The activation script can validate a local Host
-manifest and, optionally, a public manifest URL supplied through environment
-variables. No author-owned hostname is embedded in the public repository.
-
-## Adapting another transport
-
-Keep the engine unchanged and implement a sender with the same boundary:
-
-- accept a structured event, never raw chat;
-- authenticate and encrypt in the transport layer;
-- return an explicit matching acceptance receipt;
-- preserve event IDs for idempotency;
-- fail closed on ambiguous results;
-- call satisfaction only after confirmed acceptance.
+With the committed defaults, delivery remains disabled. No files are installed,
+no timer is enabled, and no Aru message has been sent.

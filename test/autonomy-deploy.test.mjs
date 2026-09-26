@@ -25,8 +25,8 @@ test('autonomy enable rebases safely before opening every gate', async () => {
   assert.match(source, /trap rollback_failure EXIT ERR INT TERM/);
   assert.match(source, /credential permissions are unsafe/);
   assert.match(source, /parseSenderBundle/);
-  assert.match(source, /ARU_LOCAL_MANIFEST_URL/);
-  assert.match(source, /ARU_PUBLIC_MANIFEST_URL/);
+  assert.match(source, /127\.0\.0\.1:8788\/\.well-known\/aru\.json/);
+  assert.match(source, /aru\.xinchaonian\.duckdns\.org\/\.well-known\/aru\.json/);
   assert.match(source, /installed systemd unit differs from source; upgrade first/);
   assert.match(source, /rebase-clock/);
   assert.match(source, /clock rebase changed protected state content/);
@@ -41,7 +41,7 @@ test('autonomy enable rebases safely before opening every gate', async () => {
 
 test('stalled delivery recovery is narrow, backed up, and timer-off', async () => {
   const source = await readFile(recoveryPath, 'utf8');
-  assert.match(source, /source and installed versions differ; upgrade first/);
+  assert.match(source, /version 0\.9\.3 must be installed first/);
   assert.match(source, /timer must be disabled/);
   assert.match(source, /lock owner process is still alive/);
   assert.match(source, /matching claimed delivery record is missing or unsafe/);

@@ -4,7 +4,7 @@ set +x
 umask 077
 
 readonly MODE="${1:-}"
-readonly SOURCE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
+readonly SOURCE="/home/xinchao/private/ChengXiao/desire-heartbeat"
 readonly TARGET="/opt/aru-desire-heartbeat"
 readonly DATA="/var/lib/aru-desire-heartbeat"
 readonly UNIT_DIR="/etc/systemd/system"
@@ -17,8 +17,6 @@ readonly ENABLE_MAGIC="aru-desire-heartbeat-external-trigger-v1"
 readonly SERVICE="aru-desire-heartbeat.service"
 readonly TIMER="aru-desire-heartbeat.timer"
 readonly BACKUP_PARENT="/var/backups/aru-desire-heartbeat-activation"
-readonly ARU_LOCAL_MANIFEST_URL="${ARU_LOCAL_MANIFEST_URL:-http://127.0.0.1:8788/.well-known/aru.json}"
-readonly ARU_PUBLIC_MANIFEST_URL="${ARU_PUBLIC_MANIFEST_URL:-}"
 
 ATTEMPT=""
 STATE_REBASED=0
@@ -107,12 +105,10 @@ runuser -u aru-desire -- /usr/bin/node --input-type=module -e '
  import {parseSenderBundle} from "file:///opt/aru-desire-heartbeat/delivery/aru-wake-sender.mjs";
  parseSenderBundle((await readFile(process.argv[1],"utf8")).trim());
 ' "$CREDENTIAL" >/dev/null || die "credential format is invalid"
-curl -fsS -o /dev/null "$ARU_LOCAL_MANIFEST_URL" ||
+curl -fsS -o /dev/null http://127.0.0.1:8788/.well-known/aru.json ||
   die "local Aru Host manifest is unavailable"
-if [[ -n "$ARU_PUBLIC_MANIFEST_URL" ]]; then
-  curl -fsS -o /dev/null "$ARU_PUBLIC_MANIFEST_URL" ||
-    die "public Aru Host manifest is unavailable"
-fi
+curl -fsS -o /dev/null https://aru.xinchaonian.duckdns.org/.well-known/aru.json ||
+  die "public Aru Host manifest is unavailable"
 
 if [[ -e "$BACKUP_PARENT" || -L "$BACKUP_PARENT" ]]; then
   [[ -d "$BACKUP_PARENT" && ! -L "$BACKUP_PARENT" &&

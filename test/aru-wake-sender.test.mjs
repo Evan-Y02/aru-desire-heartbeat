@@ -31,7 +31,7 @@ test('sender bundle validation is strict and requires HTTPS', () => {
 });
 test('sealed event matches the Aru v0.30.2 AES-256-GCM protocol', () => {
   const event = {
-    schema: 'aru.desire-heartbeat.event.v1',
+    schema: 'xinchao.desire-external-event.v1',
     eventId: 'decision-1',
     userAuthored: false,
     purpose: 'automatic_trigger',
@@ -57,7 +57,7 @@ test('sealed event matches the Aru v0.30.2 AES-256-GCM protocol', () => {
 });
 test('submission uses only the credential URL and bearer token', async () => {
   const event = {
-    schema: 'aru.desire-heartbeat.event.v1',
+    schema: 'xinchao.desire-external-event.v1',
     eventId: 'decision-2',
     userAuthored: false,
   };
@@ -93,7 +93,7 @@ test('native HTTPS sender runs under --jitless without Undici or WebAssembly', (
   const source = `
     import { submitAruExternalTrigger } from ${JSON.stringify(moduleUrl)};
     const credential = ${JSON.stringify({ ...BUNDLE, submitURL: 'https://127.0.0.1:1/events' })};
-    const event = { schema: 'aru.desire-heartbeat.event.v1', eventId: 'jitless-test' };
+    const event = { schema: 'xinchao.desire-external-event.v1', eventId: 'jitless-test' };
     try {
       await submitAruExternalTrigger({ credential, event, timeoutMs: 250 });
       process.exit(2);

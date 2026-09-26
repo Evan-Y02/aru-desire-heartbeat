@@ -1,9 +1,9 @@
 {
   "name": "aru-desire-heartbeat",
-  "version": "0.9.6",
+  "version": "0.9.7",
   "description": "A lightweight, persistent and testable desire heartbeat for AI companions.",
   "license": "MIT",
-  "private": false,
+  "private": true,
   "type": "module",
   "engines": {
     "node": ">=22"
@@ -14,7 +14,9 @@
   "bin": {
     "desire-heartbeat": "./bin/desire-heartbeat.mjs",
     "desire-cycle": "./bin/desire-cycle.mjs",
-    "desire-deliver": "./bin/desire-deliver.mjs"
+    "desire-deliver": "./bin/desire-deliver.mjs",
+    "desire-turn-receiver": "./bin/desire-turn-receiver.mjs",
+    "desire-interaction-init": "./bin/desire-interaction-init.mjs"
   },
   "repository": {
     "type": "git",

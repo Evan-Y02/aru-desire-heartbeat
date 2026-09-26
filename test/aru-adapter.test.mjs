@@ -133,7 +133,7 @@ test('event identifies an internal automatic trigger, not user input', () => {
   assert.equal(event.purpose, 'automatic_trigger');
   assert.equal(event.decision.drive, 'attachment');
   assert.equal(event.relatedThoughts.length, 1);
-  assert.match(event.guidance.join(' '), /不是用户发来的消息/);
+  assert.match(event.guidance.join(' '), /不是解月发来的消息/);
 });
 test('exact enable file is required', async () => {
   const directory = await tempDirectory();

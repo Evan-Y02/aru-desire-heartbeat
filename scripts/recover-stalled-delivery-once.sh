@@ -35,10 +35,8 @@ trap cleanup EXIT
 [[ "$EUID" -eq 0 ]] || die "must run as root"
 [[ "$MODE" == "--apply" ]] || die "usage: recover-stalled-delivery-once.sh --apply"
 for command in node runuser install mktemp stat readlink rm systemctl kill sha256sum cut chown chmod; do need "$command"; done
-SOURCE_VERSION="$(node -p "require('$SOURCE/package.json').version")"
-TARGET_VERSION="$(node -p "require('$TARGET/package.json').version")"
-[[ "$SOURCE_VERSION" == "$TARGET_VERSION" ]] ||
-  die "source and installed versions differ; upgrade first"
+[[ "$(node -p "require('$TARGET/package.json').version")" == "0.9.3" ]] ||
+  die "version 0.9.3 must be installed first"
 [[ "$(systemctl is-enabled "$TIMER" 2>/dev/null || true)" == disabled ]] ||
   die "timer must be disabled"
 [[ "$(systemctl is-active "$TIMER" 2>/dev/null || true)" == inactive ]] ||

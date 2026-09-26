@@ -41,8 +41,10 @@ export async function runHeartbeatCycle({
       status = 'held_disabled';
       if (!isSolo && !deliveryConfig.enabled) extraReasons.push('delivery-adapter-disabled');
     } else if (pending && isSolo) {
-      status = 'solo_completed';
-      extraReasons.push('solo-completed');
+      status = heartbeatConfig.soloSessionsEnabled ? 'solo_selected' : 'solo_completed';
+      extraReasons.push(
+        heartbeatConfig.soloSessionsEnabled ? 'solo-session-selected' : 'solo-completed',
+      );
     } else if (pending) {
       status = 'submitting';
     }
@@ -56,6 +58,18 @@ export async function runHeartbeatCycle({
         tick.state,
         createTimelineEntry(tick, heartbeatConfig, nowMs, status, extraReasons),
       );
+    }
+
+    if (pending && isSolo && !actionDisabled && heartbeatConfig.soloSessionsEnabled) {
+      await atomicSaveState(directory, tick.state, heartbeatConfig);
+      return {
+        status,
+        state: tick.state,
+        elapsedSeconds: tick.elapsedSeconds,
+        decisionId: pending.id,
+        intent: pending.intent,
+        soloGenerationRequired: true,
+      };
     }
 
     if (pending && isSolo && !actionDisabled) {

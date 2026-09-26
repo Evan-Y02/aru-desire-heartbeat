@@ -5,23 +5,40 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#f7f5fa">
   <meta name="robots" content="noindex,nofollow,noarchive">
-  <title>欲望状态</title>
+  <title>程晓 · 欲望状态</title>
   <link rel="stylesheet" href="/styles.css">
   <script src="/app.js" defer></script>
 </head>
 <body>
   <div class="mist mist--one" aria-hidden="true"></div>
   <div class="mist mist--two" aria-hidden="true"></div>
-  <main class="shell">
+  <section class="login-shell" id="login-view" aria-labelledby="login-title">
+    <div class="login-card card">
+      <div class="login-orb" aria-hidden="true">心</div>
+      <p class="eyebrow">CHENGXIAO PULSE</p>
+      <h1 id="login-title">打开欲望系统</h1>
+      <p class="login-copy">状态与心跳都留在自己的服务器里。登录后才能看见这扇窗。</p>
+      <form id="login-form" autocomplete="on">
+        <label for="username">用户名</label>
+        <input id="username" name="username" type="text" value="xinchao" autocomplete="username" required maxlength="128">
+        <label for="password">密码</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" required maxlength="256">
+        <button type="submit">进入面板</button>
+        <p class="login-error" id="login-error" role="alert"></p>
+      </form>
+    </div>
+  </section>
+  <main class="shell" id="app-view" hidden>
     <header class="topbar">
       <div>
-        <p class="eyebrow">DESIRE PULSE</p>
-        <h1>欲望状态</h1>
+        <p class="eyebrow">CHENGXIAO PULSE</p>
+        <h1>程晓 · 欲望状态</h1>
       </div>
       <div class="live-pill" id="live-pill">
         <span class="live-dot"></span>
         <span id="live-label">读取中</span>
       </div>
+      <button class="logout-button" id="logout-button" type="button">退出</button>
     </header>
     <section class="hero card" aria-labelledby="strongest-heading">
       <div class="hero-orb" aria-hidden="true">心</div>
@@ -67,6 +84,17 @@
         <span class="count" id="thought-count">0 条</span>
       </summary>
       <div class="thought-list" id="thought-list"></div>
+    </details>
+
+    <details class="card disclosure" id="solo-session-panel" hidden>
+      <summary>
+        <span>
+          <span class="summary-icon">🌙</span>
+          最近一次 Solo
+        </span>
+        <span class="chevron">私密记录</span>
+      </summary>
+      <dl class="runtime-list solo-session-list" id="solo-session-list"></dl>
     </details>
 
     <details class="card disclosure">

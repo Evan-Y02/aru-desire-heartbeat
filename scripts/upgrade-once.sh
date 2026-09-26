@@ -4,7 +4,7 @@ set +x
 umask 077
 
 readonly MODE="${1:-}"
-readonly SOURCE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
+readonly SOURCE="/home/xinchao/private/ChengXiao/desire-heartbeat"
 readonly TARGET="/opt/aru-desire-heartbeat"
 readonly DATA="/var/lib/aru-desire-heartbeat"
 readonly UNIT_DIR="/etc/systemd/system"

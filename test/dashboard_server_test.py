@@ -1,4 +1,6 @@
+import base64
 import copy
+import hashlib
 import importlib.util
 import json
 import os
@@ -74,6 +76,20 @@ class DashboardTests(unittest.TestCase):
         os.chmod(self.state_path, 0o600)
         self.config = ROOT / "config" / "default.json"
         self.public = ROOT / "dashboard" / "public"
+        self.auth_path = self.data / "dashboard-auth.json"
+        self.password = "correct-horse-battery"
+        salt = b"0123456789abcdef"
+        self.auth_path.write_text(json.dumps({
+            "schema": "aru.desire-dashboard.auth.v1",
+            "version": 1,
+            "username": "xinchao",
+            "salt": base64.b64encode(salt).decode("ascii"),
+            "digest": hashlib.scrypt(
+                self.password.encode("utf-8"), salt=salt,
+                n=2 ** 14, r=8, p=1, dklen=32,
+            ).hex(),
+        }), encoding="utf-8")
+        os.chmod(self.auth_path, 0o600)
         self.servers = []
 
     def tearDown(self):
@@ -81,15 +97,37 @@ class DashboardTests(unittest.TestCase):
             server.shutdown()
             server.server_close()
         self.temporary.cleanup()
-    def serve(self):
+    def serve(self, config_path=None):
         server = dashboard.DashboardServer(("127.0.0.1", 0), dashboard.DashboardHandler)
-        server.config_path = self.config
+        server.config_path = self.config if config_path is None else config_path
         server.data_directory = self.data
         server.public_directory = self.public
+        server.auth_record = dashboard.load_auth_record(self.auth_path)
+        server.sessions = {}
+        server.login_attempts = {}
+        server.auth_lock = threading.Lock()
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         self.servers.append(server)
         return "http://127.0.0.1:" + str(server.server_address[1])
+
+    def login(self, origin, username="xinchao", password=None):
+        request = Request(
+            origin + "/api/login",
+            method="POST",
+            data=json.dumps({
+                "username": username,
+                "password": self.password if password is None else password,
+            }).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+        )
+        with urlopen(request, timeout=3) as response:
+            cookie = response.headers["Set-Cookie"]
+        return cookie.split(";", 1)[0], cookie
+
+    def authenticated_open(self, origin, path):
+        cookie, _ = self.login(origin)
+        return urlopen(Request(origin + path, headers={"Cookie": cookie}), timeout=3)
 
     def test_snapshot_maps_all_drives_without_mutation(self):
         state = fixture_state()
@@ -117,13 +155,31 @@ class DashboardTests(unittest.TestCase):
     def test_api_is_read_only_and_non_cacheable(self):
         before = self.state_path.read_bytes()
         origin = self.serve()
-        with urlopen(origin + "/api/snapshot", timeout=3) as response:
+        with self.authenticated_open(origin, "/api/snapshot") as response:
             self.assertEqual(response.status, 200)
             self.assertIn("no-store", response.headers["Cache-Control"])
             self.assertIn("frame-ancestors 'none'", response.headers["Content-Security-Policy"])
             result = json.loads(response.read())
         self.assertEqual(result["schema"], "aru.desire-dashboard.snapshot.v1")
         self.assertEqual(self.state_path.read_bytes(), before)
+
+    def test_web_login_protects_snapshot_and_uses_secure_cookie(self):
+        origin = self.serve()
+        with urlopen(origin + "/api/session", timeout=3) as response:
+            self.assertFalse(json.loads(response.read())["authenticated"])
+        with self.assertRaises(HTTPError) as unauthenticated:
+            urlopen(origin + "/api/snapshot", timeout=3)
+        self.assertEqual(unauthenticated.exception.code, 401)
+        with self.assertRaises(HTTPError) as rejected:
+            self.login(origin, password="wrong-password")
+        self.assertEqual(rejected.exception.code, 401)
+        cookie, full_cookie = self.login(origin)
+        self.assertIn("HttpOnly", full_cookie)
+        self.assertIn("Secure", full_cookie)
+        self.assertIn("SameSite=Strict", full_cookie)
+        request = Request(origin + "/api/snapshot", headers={"Cookie": cookie})
+        with urlopen(request, timeout=3) as response:
+            self.assertEqual(response.status, 200)
     def test_writes_and_unknown_paths_are_rejected(self):
         origin = self.serve()
         request = Request(origin + "/api/snapshot", method="POST", data=b"{}")
@@ -170,7 +226,7 @@ class DashboardTests(unittest.TestCase):
         self.assertIn("这是连续第三次选择暂时不说", script)
         self.assertIn("此前已经连续三次没有开口", script)
         self.assertIn("欲望已经到达 100%", script)
-        self.assertIn("心理活动与 Solo 均不调用", script)
+        self.assertIn("Solo 仅复用授权自主检查回合", script)
 
     def test_solo_timeline_and_cooldown_are_visible(self):
         state = fixture_state()
@@ -199,13 +255,65 @@ class DashboardTests(unittest.TestCase):
         os.chmod(self.state_path, 0o644)
         origin = self.serve()
         with self.assertRaises(HTTPError) as unavailable:
-            urlopen(origin + "/api/snapshot", timeout=3)
+            self.authenticated_open(origin, "/api/snapshot")
         self.assertEqual(unavailable.exception.code, 503)
+
+    def test_solo_session_detail_requires_login_and_exposes_only_private_view(self):
+        config = json.loads(self.config.read_text(encoding="utf-8"))
+        config["soloSessionsEnabled"] = True
+        enabled_config = self.data / "enabled-config.json"
+        enabled_config.write_text(json.dumps(config), encoding="utf-8")
+        interaction = {
+            "schema": "aru.desire-heartbeat.interaction-state.v1",
+            "version": 1,
+            "chat": {},
+            "arousal": {},
+            "soloSessions": {
+                "activeSessionId": None,
+                "processedRunIds": ["run-internal"],
+                "processedStepIds": ["step-internal"],
+                "sessions": [{
+                    "sessionId": "solo-session-1-1",
+                    "selectedAt": pair(NOW),
+                    "endedAt": pair(NOW + 1000),
+                    "triggerReason": "Synthetic private trigger.",
+                    "thought": "Synthetic generated thought.",
+                    "processSummary": "Synthetic ordered process summary.",
+                    "released": True,
+                    "outcome": "completed_release",
+                    "climaxQuality": 0.88,
+                    "output": 0.25,
+                    "afterThought": "Synthetic afterthought.",
+                }],
+            },
+        }
+        interaction_path = self.data / "interaction-state.json"
+        interaction_path.write_text(json.dumps(interaction), encoding="utf-8")
+        os.chmod(interaction_path, 0o600)
+        origin = self.serve(enabled_config)
+        with self.assertRaises(HTTPError) as rejected:
+            urlopen(origin + "/api/snapshot", timeout=3)
+        self.assertEqual(rejected.exception.code, 401)
+        with self.authenticated_open(origin, "/api/snapshot") as response:
+            snapshot = json.loads(response.read())
+        solo = snapshot["soloSession"]
+        self.assertEqual(solo["triggerReason"], "Synthetic private trigger.")
+        serialized = json.dumps(solo)
+        self.assertNotIn("processedRunIds", serialized)
+        self.assertNotIn("sessionId", serialized)
+        self.assertNotIn("step-internal", serialized)
+
+    def test_private_auth_permissions_are_enforced(self):
+        os.chmod(self.auth_path, 0o644)
+        with self.assertRaisesRegex(ValueError, "unsafe private file"):
+            dashboard.create_server(
+                "127.0.0.1", 18760, self.config, self.data, self.public, self.auth_path,
+            )
 
     def test_public_factory_refuses_non_loopback(self):
         with self.assertRaisesRegex(ValueError, "must bind to 127.0.0.1"):
             dashboard.create_server(
-                "0.0.0.0", 18760, self.config, self.data, self.public,
+                "0.0.0.0", 18760, self.config, self.data, self.public, self.auth_path,
             )
 
 

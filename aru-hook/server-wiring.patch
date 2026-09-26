@@ -1,0 +1,16 @@
+--- server.mjs
++++ server.mjs
+@@
+ import { createWakeBridge } from "./wake-bridge.mjs";
++import { createAruDesireTurnHook, wrapOnTurnSettled } from "./aru-desire-turn-hook.mjs";
+@@
+ const remotePush = createAPNsPushHost({
+@@
+ });
++const desireTurnHook = createAruDesireTurnHook();
+@@
+-  onTurnSettled: remotePush.deliverHostedCollaboratorTurn,
++  onTurnSettled: wrapOnTurnSettled(remotePush.deliverHostedCollaboratorTurn, desireTurnHook),
+@@
+     deviceCount: state.devices.filter((d) => !d.revokedAt).length,
++    desireTurnHook: desireTurnHook.diagnostics(),

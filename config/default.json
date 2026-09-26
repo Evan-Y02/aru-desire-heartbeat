@@ -4,6 +4,10 @@
   "heartbeatSeconds": 600,
   "observeOnly": true,
   "deliveryEnabled": false,
+  "chatStimulusEnabled": false,
+  "arousalEnabled": false,
+  "arousalDriveSettlementEnabled": false,
+  "soloSessionsEnabled": false,
   "triggerThreshold": 0.78,
   "fatigueGate": 0.72,
   "expression": {
@@ -27,9 +31,53 @@
     "libidoOverAttachmentWeight": 0.80,
     "afterContactBonus": 0.25,
     "afterSoloPenalty": 0.20,
-    "fatigueWeight": 0.15
+    "fatigueWeight": 0.15,
+    "outputMultiplier": 0.80,
+    "reserveCostMultiplier": 0.80,
+    "sessionMaxCount": 24,
+    "maxActionBeats": 24
   },
   "satisfactionCarryoverFactor": 0.70,
+  "chatStimulus": {
+    "decayTauSeconds": 21600,
+    "windowSeconds": 3600,
+    "ledgerMaxCount": 512,
+    "pendingMaxCount": 24,
+    "intimacyNoReleaseCarryoverFactor": 0.80,
+    "singleCaps": {
+      "attachment": 0.08,
+      "curiosity": 0.03,
+      "reflection": 0.08,
+      "duty": 0.08,
+      "social": 0.06,
+      "fatigue": 0.00,
+      "libido": 0.10,
+      "stress": 0.08
+    },
+    "windowCaps": {
+      "attachment": 0.20,
+      "curiosity": 0.08,
+      "reflection": 0.20,
+      "duty": 0.20,
+      "social": 0.16,
+      "fatigue": 0.00,
+      "libido": 0.24,
+      "stress": 0.20
+    }
+  },
+  "arousal": {
+    "tauSeconds": 1800,
+    "gain": 0.20,
+    "charged": 0.40,
+    "edge": 0.88,
+    "ponr": 0.96,
+    "refractoryMinSeconds": 60,
+    "refractoryMaxSeconds": 120,
+    "reserveRecoverySeconds": 10800,
+    "passiveContactCap": 0.72,
+    "ledgerMaxCount": 512,
+    "releaseCarryoverFactor": 0.30
+  },
   "thoughts": {
     "autoCreateAbove": 0.55,
     "autoFixationAbove": 0.80,

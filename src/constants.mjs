@@ -38,6 +38,7 @@ export const TIMELINE_OUTCOMES = Object.freeze([
   'held_claimed',
   'delivery_failed',
   'solo_completed',
+  'solo_selected',
 ]);
 export const TIMELINE_REASONS = Object.freeze([
   'clock-anomaly',
@@ -58,4 +59,5 @@ export const TIMELINE_REASONS = Object.freeze([
   'delivery-already-claimed',
   'delivery-failed',
   'solo-completed',
+  'solo-session-selected',
 ]);

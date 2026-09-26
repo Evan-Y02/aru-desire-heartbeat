@@ -61,8 +61,12 @@ export function validateConfig(config) {
     throw new ValidationError('unsupported config schema or version');
   }
   assertInteger(config.heartbeatSeconds, 'config.heartbeatSeconds', 1);
-  if (typeof config.observeOnly !== 'boolean' || typeof config.deliveryEnabled !== 'boolean') {
-    throw new ValidationError('observeOnly and deliveryEnabled must be booleans');
+  if (typeof config.observeOnly !== 'boolean' || typeof config.deliveryEnabled !== 'boolean' ||
+      typeof config.chatStimulusEnabled !== 'boolean' ||
+      typeof config.arousalEnabled !== 'boolean' ||
+      typeof config.arousalDriveSettlementEnabled !== 'boolean' ||
+      typeof config.soloSessionsEnabled !== 'boolean') {
+    throw new ValidationError('feature and delivery gates must be booleans');
   }
   assertUnit(config.triggerThreshold, 'config.triggerThreshold');
   assertUnit(config.fatigueGate, 'config.fatigueGate');
@@ -90,8 +94,48 @@ export function validateConfig(config) {
   for (const key of [
     'carryoverFactor', 'basePreference', 'libidoOverAttachmentWeight',
     'afterContactBonus', 'afterSoloPenalty', 'fatigueWeight',
+    'outputMultiplier', 'reserveCostMultiplier',
   ]) assertUnit(config.solo[key], `config.solo.${key}`);
+  assertInteger(config.solo.sessionMaxCount, 'config.solo.sessionMaxCount', 1);
+  assertInteger(config.solo.maxActionBeats, 'config.solo.maxActionBeats', 1);
   assertUnit(config.satisfactionCarryoverFactor, 'config.satisfactionCarryoverFactor');
+  assertPlainObject(config.chatStimulus, 'config.chatStimulus');
+  assertInteger(config.chatStimulus.decayTauSeconds, 'config.chatStimulus.decayTauSeconds', 1);
+  assertInteger(config.chatStimulus.windowSeconds, 'config.chatStimulus.windowSeconds', 1);
+  assertInteger(config.chatStimulus.ledgerMaxCount, 'config.chatStimulus.ledgerMaxCount', 1);
+  assertInteger(config.chatStimulus.pendingMaxCount, 'config.chatStimulus.pendingMaxCount', 1);
+  if (config.chatStimulus.intimacyNoReleaseCarryoverFactor !== null) {
+    assertUnit(
+      config.chatStimulus.intimacyNoReleaseCarryoverFactor,
+      'config.chatStimulus.intimacyNoReleaseCarryoverFactor',
+    );
+  }
+  assertDriveRecord(config.chatStimulus.singleCaps, 'config.chatStimulus.singleCaps', assertUnit);
+  assertDriveRecord(config.chatStimulus.windowCaps, 'config.chatStimulus.windowCaps', assertUnit);
+  for (const drive of DRIVES) {
+    if (config.chatStimulus.windowCaps[drive] < config.chatStimulus.singleCaps[drive]) {
+      throw new ValidationError(`config.chatStimulus.windowCaps.${drive} is below its single cap`);
+    }
+  }
+  assertPlainObject(config.arousal, 'config.arousal');
+  for (const key of ['tauSeconds', 'refractoryMinSeconds', 'refractoryMaxSeconds',
+    'reserveRecoverySeconds', 'ledgerMaxCount']) {
+    assertInteger(config.arousal[key], `config.arousal.${key}`, 1);
+  }
+  for (const key of ['gain', 'charged', 'edge', 'ponr', 'passiveContactCap']) {
+    assertUnit(config.arousal[key], `config.arousal.${key}`);
+  }
+  if (!(config.arousal.charged < config.arousal.passiveContactCap &&
+        config.arousal.passiveContactCap < config.arousal.edge &&
+        config.arousal.edge < config.arousal.ponr)) {
+    throw new ValidationError('arousal thresholds must be strictly ordered');
+  }
+  if (config.arousal.refractoryMaxSeconds < config.arousal.refractoryMinSeconds) {
+    throw new ValidationError('arousal refractory maximum is below minimum');
+  }
+  if (config.arousal.releaseCarryoverFactor !== null) {
+    assertUnit(config.arousal.releaseCarryoverFactor, 'config.arousal.releaseCarryoverFactor');
+  }
   assertPlainObject(config.thoughts, 'config.thoughts');
   for (const key of [
     'autoCreateAbove', 'autoFixationAbove', 'autoReinforcePerHeartbeat',
@@ -229,8 +273,12 @@ export function validateState(state, config) {
     if (!DRIVES.includes(thought.drive) || !['flit', 'fixation'].includes(thought.type)) {
       throw new ValidationError('thought drive or type is invalid');
     }
-    if (thought.source !== undefined && !['automatic', 'manual'].includes(thought.source)) {
+    if (thought.source !== undefined && !['automatic', 'manual', 'event'].includes(thought.source)) {
       throw new ValidationError('thought source is invalid');
+    }
+    if (thought.source === 'event' &&
+        (typeof thought.eventId !== 'string' || !/^event-[a-f0-9]{64}$/.test(thought.eventId))) {
+      throw new ValidationError('event thought reference is invalid');
     }
     assertUnit(thought.intensity, 'thought intensity');
     assertInteger(thought.fedCount, 'thought fedCount');
@@ -243,5 +291,21 @@ export function validateState(state, config) {
   }
   validateTimeline(state.timeline);
   validateDecision(state.pendingDecision);
+  if (state.appliedEffectIds !== undefined) {
+    if (!Array.isArray(state.appliedEffectIds) || state.appliedEffectIds.length > 512 ||
+        state.appliedEffectIds.some((id) => typeof id !== 'string' ||
+          !/^effect-[a-f0-9]{64}$/.test(id)) ||
+        new Set(state.appliedEffectIds).size !== state.appliedEffectIds.length) {
+      throw new ValidationError('state.appliedEffectIds is invalid');
+    }
+  }
+  if (state.appliedChatEventIds !== undefined) {
+    if (!Array.isArray(state.appliedChatEventIds) || state.appliedChatEventIds.length > 512 ||
+        state.appliedChatEventIds.some((id) => typeof id !== 'string' ||
+          !/^event-[a-f0-9]{64}$/.test(id)) ||
+        new Set(state.appliedChatEventIds).size !== state.appliedChatEventIds.length) {
+      throw new ValidationError('state.appliedChatEventIds is invalid');
+    }
+  }
   return state;
 }

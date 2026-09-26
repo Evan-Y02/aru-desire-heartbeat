@@ -14,6 +14,7 @@ Environment=ARU_DESIRE_DASHBOARD_PORT=18760
 Environment=ARU_DESIRE_CONFIG=/opt/aru-desire-heartbeat/config/default.json
 Environment=ARU_DESIRE_DATA_DIR=/var/lib/aru-desire-heartbeat
 Environment=ARU_DESIRE_DASHBOARD_PUBLIC=/opt/aru-desire-heartbeat/dashboard/public
+Environment=ARU_DESIRE_DASHBOARD_AUTH=/var/lib/aru-desire-heartbeat/dashboard-auth.json
 ExecStart=/usr/bin/python3 -I /opt/aru-desire-heartbeat/dashboard/server.py
 Restart=on-failure
 RestartSec=5
