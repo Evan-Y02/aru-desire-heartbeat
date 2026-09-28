@@ -1,16 +1,40 @@
 --- server.mjs
 +++ server.mjs
 @@
- import { createWakeBridge } from "./wake-bridge.mjs";
+import { createWakeBridge } from "./wake-bridge.mjs";
 +import { createAruDesireTurnHook, wrapOnTurnSettled } from "./aru-desire-turn-hook.mjs";
 @@
  const remotePush = createAPNsPushHost({
 @@
  });
-+const desireTurnHook = createAruDesireTurnHook();
++const desireTurnHook = createAruDesireTurnHook(); // shared by relay and collaborator host
+@@
+-  onTurnSettled: (candidate) => conversationDesire.submit(candidate),
++  onTurnSettled: (candidate) => candidate?.outcome === "completed"
++    ? desireTurnHook.deliver(candidate)
++    : conversationDesire.submit(candidate),
 @@
 -  onTurnSettled: remotePush.deliverHostedCollaboratorTurn,
 +  onTurnSettled: wrapOnTurnSettled(remotePush.deliverHostedCollaboratorTurn, desireTurnHook),
 @@
      deviceCount: state.devices.filter((d) => !d.revokedAt).length,
 +    desireTurnHook: desireTurnHook.diagnostics(),
+--- conversation-turn-relay.mjs
++++ conversation-turn-relay.mjs
+@@
+ import { buildStirCandidate } from "./conversation-desire-candidate.mjs";
++import { buildAruDesireRelayTurn } from "./aru-desire-relay-turn.mjs";
+@@
+-      let desireCandidate = null;
++      turn.completedAt = Date.now();
++      const desireCompleteTurn = buildAruDesireRelayTurn({
++        turn, providerBody: body, responseBody,
++      });
++      let desireCandidate = null;
+@@
+       if (desireCandidate?.kind === "stir") {
+         setImmediate(() => { void notifyTurnSettled(desireCandidate); });
+       }
++      if (desireCompleteTurn) {
++        setImmediate(() => { void notifyTurnSettled(desireCompleteTurn); });
++      }

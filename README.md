@@ -19,6 +19,22 @@ The optional Solo Session layer separates autonomous selection from preparation,
 structured action beats, edge, release/no-release completion, and downstream
 settlement. It is also disabled by default. See `SOLO_SESSION_DESIGN.md`.
 
+## 0.9.9
+
+Version 0.9.9 closes the complete-message sexual-stimulus and satisfaction
+loop. It classifies neutral discussion, directed flirt/tease, direct desire,
+explicit sexual context, and concrete intimate action as mutually exclusive
+levels. Libido receives bounded longer-lived increments of 0, 0.020, 0.050,
+0.080, and 0.080; Arousal receives separate immediate, decaying action gains.
+
+Completed partnered/Solo facts take priority over stimulus. The four reachable
+settlements retain respectively 0.80, 0.30, 0.80, and 0.38 of libido. Stable
+fact fingerprints correlate a user fact with its assistant restatement, permit
+no-release to upgrade once to release, reject partnered/Solo conflicts, and
+recover pending receipts idempotently after restart. Both collaborator-host and
+the supported conversation-turn relay feed the same canonical hook and receiver.
+Only event classes, strengths, timestamps, fingerprints, and receipts persist.
+
 ## 0.9.8
 
 Version 0.9.8 adds restart-safe pending expiry and cooldown, bounded negative

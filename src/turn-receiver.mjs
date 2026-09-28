@@ -1,7 +1,11 @@
 import { timingSafeEqual } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { canonicalToCompleteMessage, validateCanonicalTurnEvent } from './canonical-turn-event.mjs';
-import { processPersistedMessage, settlePendingRelease } from './interaction-runtime.mjs';
+import {
+  processPersistedMessage,
+  settlePendingClassifiedSettlement,
+  settlePendingRelease,
+} from './interaction-runtime.mjs';
 import {
   atomicSaveInteractionState,
   loadInteractionState,
@@ -30,13 +34,58 @@ export function authorizeReceiverRequest(header, secret) {
     secureEqual(header.slice(7), secret);
 }
 
+async function settleLoadedPendingReceipts({
+  directory, desireState, interactionState, config,
+}) {
+  let desire = desireState;
+  let interaction = interactionState;
+  let found = false;
+  let applied = false;
+  if (config.arousalDriveSettlementEnabled !== true) {
+    return { desireState: desire, interactionState: interaction, found, applied };
+  }
+  const receipts = [
+    interaction.chat.pendingSettlementReceipt && {
+      kind: 'classified',
+      at: interaction.chat.pendingSettlementReceipt.at.epochMs,
+    },
+    interaction.arousal.pendingReleaseReceipt && {
+      kind: 'arousal',
+      at: interaction.arousal.pendingReleaseReceipt.createdAt.epochMs,
+    },
+  ].filter(Boolean).sort((left, right) => left.at - right.at);
+  for (const receipt of receipts) {
+    found = true;
+    const settled = receipt.kind === 'classified'
+      ? settlePendingClassifiedSettlement({
+        desireState: desire, interactionState: interaction, config,
+      })
+      : settlePendingRelease({
+        desireState: desire, interactionState: interaction, config,
+      });
+    desire = settled.desireState;
+    interaction = settled.interactionState;
+    applied ||= settled.applied;
+    // Desire first preserves the effect ledger before its pending receipt is
+    // cleared. Repeating after a crash completes, but never reapplies, it.
+    await atomicSaveState(directory, desire, config);
+    await atomicSaveInteractionState(directory, interaction, config);
+  }
+  return { desireState: desire, interactionState: interaction, found, applied };
+}
+
 export async function processCanonicalTurn({ event, configPath, dataDirectory }) {
   validateCanonicalTurnEvent(event);
   const message = canonicalToCompleteMessage(event);
   const config = await loadConfig(configPath);
   return withLock(dataDirectory, async (directory) => {
-    const desireState = await loadState(directory, config);
-    const interactionState = await loadInteractionState(directory, config);
+    let desireState = await loadState(directory, config);
+    let interactionState = await loadInteractionState(directory, config);
+    const recovered = await settleLoadedPendingReceipts({
+      directory, desireState, interactionState, config,
+    });
+    desireState = recovered.desireState;
+    interactionState = recovered.interactionState;
     const chatAlreadyComplete = config.chatStimulusEnabled !== true || (
       desireState.appliedChatEventIds?.includes(event.event_id) &&
       interactionState.chat.processedEvents.some((item) => item.eventId === event.event_id)
@@ -47,7 +96,7 @@ export async function processCanonicalTurn({ event, configPath, dataDirectory })
     // A full replay must return before monotonic-time validation: the first
     // event in a replayed turn is older than the state advanced by its second
     // event, but it is still a valid idempotent duplicate.
-    if (wasDuplicate) return { status: 'duplicate' };
+    if (wasDuplicate) return { status: recovered.applied ? 'settled' : 'duplicate' };
     const processed = processPersistedMessage({
       desireState, interactionState, config, message,
     });
@@ -60,6 +109,17 @@ export async function processCanonicalTurn({ event, configPath, dataDirectory })
     await atomicSaveState(directory, processed.desireState, config);
     await atomicSaveInteractionState(directory, processed.interactionState, config);
 
+    if (processed.settlementReceipt && config.arousalDriveSettlementEnabled === true) {
+      const settled = settlePendingClassifiedSettlement({
+        desireState: processed.desireState,
+        interactionState: processed.interactionState,
+        config,
+      });
+      await atomicSaveState(directory, settled.desireState, config);
+      await atomicSaveInteractionState(directory, settled.interactionState, config);
+      return { status: settled.applied ? 'settled' : processed.status };
+    }
+
     if (processed.releaseReceipt && config.arousalDriveSettlementEnabled === true) {
       const settled = settlePendingRelease({
         desireState: processed.desireState,
@@ -71,6 +131,23 @@ export async function processCanonicalTurn({ event, configPath, dataDirectory })
       return { status: settled.applied ? 'settled' : processed.status };
     }
     return { status: processed.status };
+  });
+}
+
+export async function recoverPendingSettlement({ configPath, dataDirectory }) {
+  const config = await loadConfig(configPath);
+  return withLock(dataDirectory, async (directory) => {
+    const desireState = await loadState(directory, config);
+    const interactionState = await loadInteractionState(directory, config);
+    if (config.arousalDriveSettlementEnabled !== true ||
+        (!interactionState.chat.pendingSettlementReceipt &&
+          !interactionState.arousal.pendingReleaseReceipt)) {
+      return { status: 'no_op' };
+    }
+    const settled = await settleLoadedPendingReceipts({
+      directory, desireState, interactionState, config,
+    });
+    return { status: settled.applied ? 'settled' : 'duplicate' };
   });
 }
 

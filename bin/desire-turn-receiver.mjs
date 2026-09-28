@@ -6,6 +6,7 @@ import {
   authorizeReceiverRequest,
   loadReceiverSecret,
   processCanonicalTurn,
+  recoverPendingSettlement,
   readJsonBody,
 } from '../src/turn-receiver.mjs';
 import { ValidationError } from '../src/schema.mjs';
@@ -24,6 +25,7 @@ if (host !== '127.0.0.1' || !Number.isSafeInteger(port) || port < 1024 || port >
 }
 
 const secret = await loadReceiverSecret(secretPath);
+await recoverPendingSettlement({ configPath, dataDirectory });
 const diagnostics = {
   accepted_count: 0,
   duplicate_count: 0,

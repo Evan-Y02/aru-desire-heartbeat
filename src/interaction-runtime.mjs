@@ -1,6 +1,7 @@
 import {
   applyArousalEvent,
   applyNoReleaseSettlement,
+  applyReportedReleaseArousal,
   applyReleaseReceiptToDesire,
   createArousalState,
   validateArousalState,
@@ -15,6 +16,7 @@ import {
 } from './chat-stimulus.mjs';
 import { ValidationError } from './schema.mjs';
 import { createSoloSessionStore, validateSoloSessionStore } from './solo-session.mjs';
+import { clamp, timePair } from './engine.mjs';
 
 export const INTERACTION_STATE_SCHEMA = 'aru.desire-heartbeat.interaction-state.v1';
 
@@ -62,13 +64,13 @@ export function processPersistedMessage({
   if (config.chatStimulusEnabled !== true && config.arousalEnabled !== true) {
     return {
       status: 'disabled', desireState, interactionState,
-      interpreted: null, releaseReceipt: null,
+      interpreted: null, releaseReceipt: null, settlementReceipt: null,
     };
   }
   if (!isComplete(message)) {
     return {
       status: 'ignored_incomplete', desireState, interactionState,
-      interpreted: null, releaseReceipt: null,
+      interpreted: null, releaseReceipt: null, settlementReceipt: null,
     };
   }
   const nextInteraction = structuredClone(validateInteractionState(interactionState, config));
@@ -108,9 +110,95 @@ export function processPersistedMessage({
       eventId: interpreted.eventId,
       types: interpreted.types,
       labels: interpreted.labels,
+      sexualClass: interpreted.sexualClass,
+      intensity: interpreted.intensity,
+      settlementType: interpreted.settlementType,
     },
     releaseReceipt,
+    settlementReceipt: nextInteraction.chat.pendingSettlementReceipt,
   };
+}
+
+export function settlePendingClassifiedSettlement({ desireState, interactionState, config }) {
+  const nextInteraction = structuredClone(validateInteractionState(interactionState, config));
+  const receipt = nextInteraction.chat.pendingSettlementReceipt;
+  if (!receipt || config.arousalDriveSettlementEnabled !== true) {
+    return { desireState, interactionState: nextInteraction, applied: false };
+  }
+  const desire = structuredClone(desireState);
+  const ledger = Array.isArray(desire.appliedEffectIds) ? desire.appliedEffectIds : [];
+  const alreadyApplied = ledger.includes(receipt.effectId);
+  const prior = nextInteraction.chat.settlementFacts.find((item) =>
+    item.factFingerprint === receipt.factFingerprint);
+  if (!alreadyApplied) {
+    desire.drives.libido = clamp(
+      desire.drives.libido * (receipt.toFactor / receipt.fromFactor),
+    );
+    desire.appliedEffectIds = [...ledger, receipt.effectId].slice(-512);
+    desire.lastSatisfiedAt.libido = structuredClone(receipt.at);
+    desire.updatedAt = structuredClone(receipt.at);
+    if (receipt.type === 'solo_release') {
+      desire.solo.refractoryUntil = timePair(
+        receipt.at.epochMs + config.solo.cooldownSeconds * 1000,
+      );
+    }
+    if (receipt.type.startsWith('solo_')) {
+      if (!prior) desire.solo.count += 1;
+      desire.solo.lastSoloAt = structuredClone(receipt.at);
+      desire.solo.lastLibidoChoice = 'solo';
+    } else {
+      desire.solo.lastLibidoChoice = 'seek_closeness';
+    }
+  }
+  // Desire is intentionally saved before interaction state. If a process dies
+  // between those saves, the effect ledger is already present while the old
+  // pending receipt and pre-release body remain. A missing fact record is the
+  // durable signal to complete the body side exactly once during recovery.
+  const upgradesNoReleaseToRelease = Boolean(
+    prior
+    && prior.type.endsWith('_no_release')
+    && ['partnered_release', 'solo_release'].includes(receipt.type),
+  );
+  if ((!prior || upgradesNoReleaseToRelease)
+      && ['partnered_release', 'solo_release'].includes(receipt.type)) {
+    const cause = receipt.type.startsWith('solo_') ? 'solo' : 'partnered';
+    nextInteraction.arousal = applyReportedReleaseArousal(
+      nextInteraction.arousal,
+      config.arousal,
+      {
+        eventId: receipt.eventId,
+        cause,
+        nowMs: receipt.at.epochMs,
+        outputMultiplier: cause === 'solo' ? config.solo.outputMultiplier : 1,
+        reserveCostMultiplier: cause === 'solo' ? config.solo.reserveCostMultiplier : 1,
+      },
+    );
+  }
+  if (prior) {
+    prior.type = receipt.type;
+    prior.carryoverFactor = receipt.toFactor;
+    prior.effectId = receipt.effectId;
+    prior.at = structuredClone(receipt.at);
+    if (!prior.eventIds.includes(receipt.eventId)) {
+      prior.eventIds = [...prior.eventIds, receipt.eventId].slice(
+        -config.chatStimulus.ledgerMaxCount,
+      );
+    }
+  } else {
+    nextInteraction.chat.settlementFacts.push({
+      factFingerprint: receipt.factFingerprint,
+      type: receipt.type,
+      carryoverFactor: receipt.toFactor,
+      effectId: receipt.effectId,
+      eventIds: [receipt.eventId],
+      at: structuredClone(receipt.at),
+    });
+    nextInteraction.chat.settlementFacts = nextInteraction.chat.settlementFacts.slice(
+      -config.chatStimulus.ledgerMaxCount,
+    );
+  }
+  nextInteraction.chat.pendingSettlementReceipt = null;
+  return { desireState: desire, interactionState: nextInteraction, applied: !alreadyApplied };
 }
 
 // Two-phase settlement boundary: persist interactionState with its receipt first,

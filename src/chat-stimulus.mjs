@@ -13,7 +13,10 @@ import { ValidationError } from './schema.mjs';
 
 export const CHAT_STATE_SCHEMA = 'aru.desire-heartbeat.chat-stimulus-state.v1';
 const EVENT_TYPES = new Set([
-  'intimacy_longing', 'sexual_explicit', 'hurt_anger',
+  'intimacy_longing', 'neutral_discussion', 'flirt_tease', 'direct_desire',
+  'sexual_explicit', 'concrete_intimate_action',
+  'partnered_no_release', 'partnered_release', 'solo_no_release', 'solo_release',
+  'hurt_anger',
   'conflict', 'task_pressure', 'fatigue_burden', 'other_stress',
   'needs_support', 'affirmation', 'comfort', 'reassurance',
   'resolution', 'conflict_resolved', 'task_completed', 'rest_recovery',
@@ -21,7 +24,15 @@ const EVENT_TYPES = new Set([
 const ZERO_DRIVES = Object.freeze(Object.fromEntries(DRIVES.map((drive) => [drive, 0])));
 const TYPE_DELTAS = Object.freeze({
   intimacy_longing: { attachment: 0.055, social: 0.035 },
+  neutral_discussion: {},
+  flirt_tease: { attachment: 0.005, libido: 0.020 },
+  direct_desire: { attachment: 0.010, libido: 0.050 },
   sexual_explicit: { attachment: 0.015, libido: 0.080 },
+  concrete_intimate_action: { attachment: 0.015, libido: 0.080 },
+  partnered_no_release: {},
+  partnered_release: {},
+  solo_no_release: {},
+  solo_release: {},
   hurt_anger: { reflection: 0.070, duty: 0.070, stress: 0.060 },
   conflict: { reflection: 0.055, duty: 0.045, stress: 0.070 },
   task_pressure: { reflection: 0.025, duty: 0.070, stress: 0.060 },
@@ -39,7 +50,6 @@ const TYPE_DELTAS = Object.freeze({
 
 const PATTERNS = Object.freeze({
   intimacy_longing: /(?:想你|想念|爱你|依恋|陪着你|靠近你|miss you|love you|close to you)/iu,
-  sexual_explicit: /(?:亲吻|吻住|抚摸|摸着|摩擦|抽动|进入|高潮|射精|kiss(?:ing)?|strok(?:e|ing)|rubb(?:ing)?|thrust(?:ing)?|climax)/iu,
   hurt_anger: /(?:失望|生气|伤害了我|被伤害|委屈|辜负|angry|disappointed|hurt me)/iu,
   conflict: /(?:冲突|争吵|吵架|闹矛盾|conflict|argu(?:e|ed|ment)|fought|fight)/iu,
   task_pressure: /(?:任务压力|工作压力|截止时间|没完成|责任很重|task pressure|deadline|workload|unfinished task)/iu,
@@ -107,6 +117,41 @@ const MEMORY = /(?:以前|曾经|上次|那次|回忆|记得当时|昨天|过去
 const THIRD_PERSON = /(?:他|她|他们|她们|别人|某人|\bhe\b|\bshe\b|\bthey\b|someone else)/iu;
 const TUTORIAL = /(?:教程|示例|举例|代码|正则|关键词|步骤|说明文|tutorial|example|sample code|documentation)/iu;
 const PARTICIPANTS = /(?:我|你|我们|彼此|me|you|we|us|each other)/iu;
+const DISCUSSION = /(?:讨论|科普|知识|健康|医学|生理|系统|设计|规则|测试|词语|意思|文章|新闻|案例|文档|解释|研究|概念|语义|discussion|medical|health|design|system|article|research)/iu;
+const PAIR = /(?:(?:我|me|I\b)[\s\S]{0,40}(?:你|you\b)|(?:你|you\b)[\s\S]{0,40}(?:我|me\b)|(?:我们|we\b|us\b|彼此|each other))/iu;
+const SOLO = /(?:我.{0,12}(?:自己解决|自慰|自己弄|自己来)|(?:自己解决|自慰|自己弄|自己来).{0,12}我|I (?:masturbated|finished myself|took care of myself))/iu;
+const COMPLETED = /(?:刚刚|刚才|方才|已经|做完了|结束了|结束后|完成了|just|already|finished|ended)/iu;
+const NO_RELEASE = /(?:没有|没|未|并未|without|did not|didn't).{0,5}(?:高潮|射精|射|climax|come|came|orgasm)/iu;
+const RELEASED = /(?:(?:达到|有了|到了|也|都|并且|然后)?高潮了|射精了|射了|came|climaxed|orgasm(?:ed)?)/iu;
+const INTIMATE_EVENT = /(?:亲密|做爱|性爱|上床|爱抚|接吻|交合|sex|intimacy|made love)/iu;
+const FLIRT = /(?:撩|撩拨|调情|暧昧|勾人|迷人|性感|诱人|心痒|馋你|逗你|teas(?:e|ing)|flirt(?:ing)?|seductive)/iu;
+const DIRECT_DESIRE = /(?:想要你|想和你亲密|想亲你|想吻你|想摸你|想抱紧你|过来亲我|身体有反应|硬了|湿了|发热了|被你撩|want you|need you|turned on|aroused|hard for you|wet for you)/iu;
+const EXPLICIT_COMBINATION = /(?:(?:做爱|性爱|上床|交合|抽动|thrust(?:ing)?|made love)|(?:阴茎|阴蒂|阴道|龟头|penis|clitoris|vagina|genitals?).{0,24}(?:抚摸|摩擦|进入|抽动|摸|stroke|rub|thrust|enter)|(?:抚摸|摩擦|抽动|stroke|rub|thrust).{0,24}(?:阴茎|阴蒂|阴道|龟头|penis|clitoris|vagina|genitals?))/iu;
+const CONCRETE_ACTION = /(?:(?:我|I\b)[\s\S]{0,36}(?:你|you\b)[\s\S]{0,24}(?:吻住|亲吻|抱住|搂紧|抚摸|摩擦|抽动|kiss(?:ing)?|hold(?:ing)?|strok(?:e|ing)|rubb?(?:ing)?|thrust(?:ing)?)|(?:我|I\b)[\s\S]{0,24}(?:吻住|亲吻|抱住|搂紧|抚摸|摩擦|抽动|kiss(?:ing)?|hold(?:ing)?|strok(?:e|ing)|rubb?(?:ing)?|thrust(?:ing)?)[\s\S]{0,36}(?:你|you\b)|(?:你|you\b)[\s\S]{0,36}(?:我|me\b)[\s\S]{0,24}(?:吻住|亲吻|抱住|搂紧|抚摸|摩擦|抽动|kiss(?:ing)?|hold(?:ing)?|strok(?:e|ing)|rubb?(?:ing)?|thrust(?:ing)?)|(?:你|you\b)[\s\S]{0,24}(?:吻住|亲吻|抱住|搂紧|抚摸|摩擦|抽动|kiss(?:ing)?|hold(?:ing)?|strok(?:e|ing)|rubb?(?:ing)?|thrust(?:ing)?)[\s\S]{0,36}(?:我|me\b))/iu;
+const DIRECTED_ACTION = /(?:(?:我|I\b).{0,16}(?:亲|吻|抱|搂|摸|抚摸|摩擦|进入|抽动)(?:着|住|紧|了)?(?:你|you\b)|(?:你|you\b).{0,16}(?:亲|吻|抱|搂|摸|抚摸|摩擦|进入|抽动)(?:着|住|紧|了)?(?:我|me\b)|(?:I\b).{0,16}(?:kiss|hold|touch|stroke|rub|enter|thrust)(?:ed|ing)?\s+(?:you\b)|(?:you\b).{0,16}(?:kiss|hold|touch|stroke|rub|enter|thrust)(?:ed|ing)?\s+(?:me\b))/iu;
+const SEXUAL_ENTRY = /(?:进入(?:你|我|身体|阴道|体内)|enter(?:ing)? (?:you|me)|(?:你|我).{0,12}(?:进入|抽动)|(?:进入|抽动).{0,12}(?:你|我))/iu;
+const SEXUAL_CLASS_INTENSITY = Object.freeze({
+  neutral_discussion: 0,
+  flirt_tease: 0.25,
+  direct_desire: 0.55,
+  sexual_explicit: 0.80,
+  concrete_intimate_action: 1,
+});
+const SETTLEMENT_TYPES = new Set([
+  'partnered_no_release', 'partnered_release', 'solo_no_release', 'solo_release',
+]);
+const SETTLEMENT_FACTORS = Object.freeze({
+  partnered_no_release: 0.80,
+  partnered_release: 0.30,
+  solo_no_release: 0.80,
+  solo_release: 0.38,
+});
+const SETTLEMENT_RANK = Object.freeze({
+  partnered_no_release: 1,
+  partnered_release: 2,
+  solo_no_release: 1,
+  solo_release: 2,
+});
 
 function digest(value) {
   return createHash('sha256').update(value).digest('hex');
@@ -128,6 +173,8 @@ export function createChatStimulusState(epochMs = Date.now()) {
     influence: structuredClone(ZERO_DRIVES),
     processedEvents: [],
     pending: [],
+    settlementFacts: [],
+    pendingSettlementReceipt: null,
   };
 }
 
@@ -136,6 +183,10 @@ export function validateChatStimulusState(state, config) {
       state.schema !== CHAT_STATE_SCHEMA || state.version !== 1) {
     throw new ValidationError('unsupported chat stimulus state', 'CHAT_STATE_CORRUPT');
   }
+  // v0.9.8 states did not contain settlement state. Adding empty fields is a
+  // lossless in-memory migration; the next normal atomic save persists v0.9.9.
+  state.settlementFacts ??= [];
+  state.pendingSettlementReceipt ??= null;
   requireEpoch(state.updatedAt?.epochMs);
   requireEpoch(state.influenceAt?.epochMs);
   for (const pair of [state.updatedAt, state.influenceAt]) {
@@ -157,10 +208,21 @@ export function validateChatStimulusState(state, config) {
     throw new ValidationError('chat queues are invalid', 'CHAT_STATE_CORRUPT');
   }
   for (const record of state.processedEvents) {
+    record.sexualClass ??= record.types.includes('sexual_explicit')
+      ? 'sexual_explicit' : 'neutral_discussion';
+    record.intensity ??= SEXUAL_CLASS_INTENSITY[record.sexualClass] ?? 0;
+    record.factFingerprint ??= null;
+    record.settlementType ??= null;
     const keys = Object.keys(record).sort().join(',');
-    if (keys !== 'at,deltas,eventId,labels,types' ||
+    if (keys !== 'at,deltas,eventId,factFingerprint,intensity,labels,settlementType,sexualClass,types' ||
         typeof record.eventId !== 'string' || !/^event-[a-f0-9]{64}$/.test(record.eventId) ||
         !Array.isArray(record.types) || record.types.some((type) => !EVENT_TYPES.has(type)) ||
+        !Object.hasOwn(SEXUAL_CLASS_INTENSITY, record.sexualClass) ||
+        !Number.isFinite(record.intensity) || record.intensity < 0 || record.intensity > 1 ||
+        (record.factFingerprint !== null &&
+          (typeof record.factFingerprint !== 'string' ||
+            !/^fact-[a-f0-9]{64}$/u.test(record.factFingerprint))) ||
+        (record.settlementType !== null && !SETTLEMENT_TYPES.has(record.settlementType)) ||
         !Array.isArray(record.labels) || record.labels.length > 4 ||
         record.labels.some((label) => typeof label !== 'string' || label.length > 40) ||
         record.deltas === null || typeof record.deltas !== 'object' || Array.isArray(record.deltas)) {
@@ -174,6 +236,49 @@ export function validateChatStimulusState(state, config) {
       if (!DRIVES.includes(drive) || !Number.isFinite(amount) || Math.abs(amount) > 1) {
         throw new ValidationError('chat event delta is invalid', 'CHAT_STATE_CORRUPT');
       }
+    }
+  }
+  if (!Array.isArray(state.settlementFacts) ||
+      state.settlementFacts.length > config.ledgerMaxCount) {
+    throw new ValidationError('settlement fact ledger is invalid', 'CHAT_STATE_CORRUPT');
+  }
+  for (const fact of state.settlementFacts) {
+    if (fact === null || typeof fact !== 'object' || Array.isArray(fact) ||
+        Object.keys(fact).sort().join(',') !==
+          'at,carryoverFactor,effectId,eventIds,factFingerprint,type' ||
+        typeof fact.factFingerprint !== 'string' ||
+        !/^fact-[a-f0-9]{64}$/u.test(fact.factFingerprint) ||
+        !SETTLEMENT_TYPES.has(fact.type) ||
+        !Number.isFinite(fact.carryoverFactor) || fact.carryoverFactor <= 0 ||
+        fact.carryoverFactor > 1 || typeof fact.effectId !== 'string' ||
+        !/^effect-[a-f0-9]{64}$/u.test(fact.effectId) || !Array.isArray(fact.eventIds) ||
+        fact.eventIds.length === 0 || fact.eventIds.length > config.ledgerMaxCount ||
+        new Set(fact.eventIds).size !== fact.eventIds.length ||
+        fact.eventIds.some((id) => typeof id !== 'string' || !/^event-[a-f0-9]{64}$/u.test(id))) {
+      throw new ValidationError('settlement fact record is invalid', 'CHAT_STATE_CORRUPT');
+    }
+    requireEpoch(fact.at?.epochMs);
+    if (typeof fact.at.iso !== 'string' || Date.parse(fact.at.iso) !== fact.at.epochMs) {
+      throw new ValidationError('settlement fact timestamp is invalid', 'CHAT_STATE_CORRUPT');
+    }
+  }
+  if (state.pendingSettlementReceipt !== null) {
+    const receipt = state.pendingSettlementReceipt;
+    if (receipt === null || typeof receipt !== 'object' || Array.isArray(receipt) ||
+        Object.keys(receipt).sort().join(',') !==
+          'at,effectId,eventId,factFingerprint,fromFactor,toFactor,type' ||
+        typeof receipt.effectId !== 'string' || !/^effect-[a-f0-9]{64}$/u.test(receipt.effectId) ||
+        typeof receipt.eventId !== 'string' || !/^event-[a-f0-9]{64}$/u.test(receipt.eventId) ||
+        typeof receipt.factFingerprint !== 'string' ||
+        !/^fact-[a-f0-9]{64}$/u.test(receipt.factFingerprint) ||
+        !SETTLEMENT_TYPES.has(receipt.type) ||
+        !Number.isFinite(receipt.fromFactor) || receipt.fromFactor <= 0 || receipt.fromFactor > 1 ||
+        !Number.isFinite(receipt.toFactor) || receipt.toFactor <= 0 || receipt.toFactor > 1) {
+      throw new ValidationError('pending settlement receipt is invalid', 'CHAT_STATE_CORRUPT');
+    }
+    requireEpoch(receipt.at?.epochMs);
+    if (typeof receipt.at.iso !== 'string' || Date.parse(receipt.at.iso) !== receipt.at.epochMs) {
+      throw new ValidationError('pending settlement timestamp is invalid', 'CHAT_STATE_CORRUPT');
     }
   }
   for (const item of state.pending) {
@@ -268,8 +373,52 @@ function contextBlocker(text) {
   return null;
 }
 
-function stimulusForText(text, role) {
-  if (!PATTERNS.sexual_explicit.test(text) || !PARTICIPANTS.test(text)) return [];
+function settlementForText(text, event) {
+  if (!text || QUESTION.test(text) || HYPOTHETICAL.test(text) || TUTORIAL.test(text) ||
+      DISCUSSION.test(text) || MEMORY.test(text) || THIRD_PERSON.test(text) ||
+      !COMPLETED.test(text)) return null;
+  const withoutNegatedRelease = text.replace(
+    /(?:没有|没|未|并未|without|did not|didn't).{0,5}?(?:高潮(?:了)?|射精(?:了)?|射(?:了)?|climax(?:ed)?|come|came|orgasm(?:ed)?)/giu,
+    ' ',
+  );
+  const released = RELEASED.test(withoutNegatedRelease);
+  const noRelease = !released && NO_RELEASE.test(text);
+  if (!noRelease && !released) return null;
+  let type = null;
+  if (SOLO.test(text)) type = released ? 'solo_release' : 'solo_no_release';
+  else if ((PAIR.test(text) || /(?:我|I\b)/iu.test(text)) && INTIMATE_EVENT.test(text)) {
+    type = released ? 'partnered_release' : 'partnered_no_release';
+  }
+  if (type === null) return null;
+  const rootMessageId = event.role === 'assistant' && typeof event.parentMessageId === 'string'
+    ? event.parentMessageId : event.providerMessageId;
+  return {
+    type,
+    factFingerprint: `fact-${digest([
+      event.source, event.conversationId, rootMessageId,
+    ].join('\u0000'))}`,
+  };
+}
+
+function sexualClassForText(text, role) {
+  if (!text || TUTORIAL.test(text) || DISCUSSION.test(text) || MEMORY.test(text) ||
+      THIRD_PERSON.test(text) || NEGATED_OR_STOP.test(text) || HYPOTHETICAL.test(text) ||
+      QUESTION.test(text)) return 'neutral_discussion';
+  if (!PARTICIPANTS.test(text)) return 'neutral_discussion';
+  const directed = PAIR.test(text) || /(?:我|I\b)/iu.test(text) ||
+    (role === 'user' && /(?:你|you\b)/iu.test(text)) ||
+    (role === 'assistant' && /(?:你|you\b)/iu.test(text));
+  const concrete = CONCRETE_ACTION.test(text) || DIRECTED_ACTION.test(text) ||
+    (PAIR.test(text) && SEXUAL_ENTRY.test(text));
+  if (concrete) return 'concrete_intimate_action';
+  if (directed && EXPLICIT_COMBINATION.test(text)) return 'sexual_explicit';
+  if (DIRECT_DESIRE.test(text)) return 'direct_desire';
+  if (directed && FLIRT.test(text)) return 'flirt_tease';
+  return 'neutral_discussion';
+}
+
+function stimulusForText(text, role, sexualClass) {
+  if (sexualClass === 'neutral_discussion') return [];
   const firstToSecond = /(?:我|I\b)[\s\S]*(?:你|you\b)/iu.test(text);
   const secondToFirst = /(?:你|you\b)[\s\S]*(?:我|me\b)/iu.test(text);
   const direction = firstToSecond
@@ -285,20 +434,28 @@ function stimulusForText(text, role) {
     : /(?:大腿内侧|inner thigh)/iu.test(text) ? 'inner_thigh'
       : /(?:胸|乳|breast|chest)/iu.test(text) ? 'chest'
         : /(?:唇|嘴|lip)/iu.test(text) ? 'lips' : 'general';
+  if (sexualClass !== 'concrete_intimate_action') {
+    const action = {
+      flirt_tease: 'flirt', direct_desire: 'desire', sexual_explicit: 'explicit',
+    }[sexualClass];
+    return action ? [{
+      action, bodyPart, posture, mode: 'active', direction,
+      releaseSignal: false, strength: SEXUAL_CLASS_INTENSITY[sexualClass],
+    }] : [];
+  }
   const definitions = [
     ['contact', /(?:接触|贴着|touch(?:ing)?)/iu, 'passive'],
-    ['hold', /(?:抱住|搂紧|hold(?:ing)?)/iu, 'passive'],
-    ['kiss', /(?:亲吻|吻住|kiss(?:ing)?)/iu, 'active'],
-    ['stroke', /(?:抚摸|摸着|strok(?:e|ing))/iu, 'active'],
+    ['hold', /(?:抱(?:住|着|紧)?|搂(?:紧|着)?|hold(?:ing)?)/iu, 'passive'],
+    ['kiss', /(?:亲(?:吻)?|吻(?:住|着)?|kiss(?:ing)?)/iu, 'active'],
+    ['stroke', /(?:抚摸|摸(?:着)?|strok(?:e|ing))/iu, 'active'],
     ['rub', /(?:摩擦|rubb(?:ing)?)/iu, 'active'],
-    ['thrust', /(?:抽动|进入|thrust(?:ing)?)/iu, 'active'],
-    ['climax', /(?:高潮|射精|climax|come)/iu, 'active'],
+    ['thrust', /(?:抽动|thrust(?:ing)?|进入(?:你|我|身体|阴道|体内)|enter(?:ing)? (?:you|me))/iu, 'active'],
   ];
   return definitions
     .filter(([, pattern]) => pattern.test(text))
     .map(([action, , mode]) => ({
       action, bodyPart, posture, mode, direction,
-      releaseSignal: action === 'climax',
+      releaseSignal: false,
     }));
 }
 
@@ -306,15 +463,23 @@ export function interpretCompleteMessage(event) {
   validateCompleteMessageEvent(event);
   const eventId = stableMessageEventId(event);
   const text = stripNonAssertions(event.content);
-  const blocker = contextBlocker(text);
-  if (blocker) {
+  const settlement = settlementForText(text, event);
+  if (settlement !== null) {
     return {
-      eventId, role: event.role, types: [], labels: [blocker],
+      eventId, role: event.role, types: [settlement.type], labels: [settlement.type],
       deltas: {}, stimuli: [], ambiguous: false,
+      sexualClass: 'neutral_discussion', intensity: 0,
+      settlementType: settlement.type, factFingerprint: settlement.factFingerprint,
       linkedCauseId: linkedCauseId(event), negativeCauseKind: null, recoveryPlan: null,
     };
   }
-  const types = [...EVENT_TYPES].filter((type) => PATTERNS[type].test(text));
+  const blocker = contextBlocker(text);
+  const sexualClass = sexualClassForText(text, event.role);
+  const emotionalTypes = blocker ? [] : [...EVENT_TYPES].filter((type) =>
+    Object.hasOwn(PATTERNS, type) && PATTERNS[type].test(text));
+  const types = sexualClass === 'neutral_discussion'
+    ? (emotionalTypes.length > 0 ? emotionalTypes : ['neutral_discussion'])
+    : [...emotionalTypes.filter((type) => type !== 'intimacy_longing'), sexualClass];
   const recovery = recoveryPlan(types);
   const deltas = {};
   for (const type of types) {
@@ -323,11 +488,14 @@ export function interpretCompleteMessage(event) {
       deltas[drive] = (deltas[drive] ?? 0) + amount;
     }
   }
-  const ambiguous = types.length === 0 && AMBIGUOUS.test(text);
-  const labels = types.length > 0 ? types.slice(0, 4) : ambiguous ? ['ambiguous_affect'] : ['no_op'];
+  const ambiguous = types.length === 1 && types[0] === 'neutral_discussion' && AMBIGUOUS.test(text);
+  const labels = blocker ? [blocker]
+    : ambiguous ? ['ambiguous_affect'] : types.slice(0, 4);
   return {
     eventId, role: event.role, types, labels, deltas,
-    stimuli: stimulusForText(text, event.role), ambiguous,
+    stimuli: stimulusForText(text, event.role, sexualClass), ambiguous,
+    sexualClass, intensity: SEXUAL_CLASS_INTENSITY[sexualClass],
+    settlementType: null, factFingerprint: null,
     linkedCauseId: linkedCauseId(event),
     negativeCauseKind: recovery === null ? negativeCauseKind(types) : null,
     recoveryPlan: recovery,
@@ -403,6 +571,37 @@ function addEventFlit(desireState, config, eventId, nowMs) {
   });
 }
 
+function stageSettlement(chatState, interpreted, nowMs, ledgerMaxCount) {
+  const type = interpreted.settlementType;
+  const factFingerprint = interpreted.factFingerprint;
+  if (!SETTLEMENT_TYPES.has(type) || typeof factFingerprint !== 'string') return false;
+  const prior = chatState.settlementFacts.find((item) =>
+    item.factFingerprint === factFingerprint);
+  if (prior) {
+    if (!prior.eventIds.includes(interpreted.eventId)) {
+      prior.eventIds = [...prior.eventIds, interpreted.eventId].slice(-ledgerMaxCount);
+    }
+    const priorCause = prior.type.startsWith('solo_') ? 'solo' : 'partnered';
+    const nextCause = type.startsWith('solo_') ? 'solo' : 'partnered';
+    if (priorCause !== nextCause || SETTLEMENT_RANK[type] <= SETTLEMENT_RANK[prior.type]) {
+      return false;
+    }
+  }
+  if (chatState.pendingSettlementReceipt !== null) return false;
+  const fromFactor = prior?.carryoverFactor ?? 1;
+  const toFactor = SETTLEMENT_FACTORS[type];
+  chatState.pendingSettlementReceipt = {
+    effectId: `effect-${digest(`settlement:${factFingerprint}:${type}`)}`,
+    eventId: interpreted.eventId,
+    factFingerprint,
+    type,
+    fromFactor,
+    toFactor,
+    at: timePair(nowMs),
+  };
+  return true;
+}
+
 export function applyChatStimulus(desireInput, chatInput, rootConfig, interpreted, nowMs) {
   if (rootConfig.chatStimulusEnabled !== true) {
     return { desireState: desireInput, chatState: chatInput, applied: false };
@@ -416,20 +615,38 @@ export function applyChatStimulus(desireInput, chatInput, rootConfig, interprete
   }
   if (desireState.appliedChatEventIds?.includes(interpreted.eventId)) {
     const reconciledAtMs = Math.max(nowMs, chatState.updatedAt.epochMs);
+    // The receiver persists desire before interaction state. If it stops in
+    // between those writes, the desire event ledger survives but the staged
+    // settlement receipt does not. Recreate only that deterministic receipt
+    // while reconciling the missing interaction ledger; the drive delta must
+    // not be applied again.
+    const stagedSettlement = rootConfig.arousalDriveSettlementEnabled === true
+      ? stageSettlement(
+        chatState, interpreted, reconciledAtMs, rootConfig.chatStimulus.ledgerMaxCount,
+      ) : false;
     chatState.processedEvents = [...chatState.processedEvents, {
       eventId: interpreted.eventId,
       types: interpreted.types,
       deltas: {},
       at: timePair(reconciledAtMs),
       labels: ['replay_reconciled'],
+      sexualClass: interpreted.sexualClass,
+      intensity: interpreted.intensity,
+      factFingerprint: interpreted.factFingerprint,
+      settlementType: interpreted.settlementType,
     }].slice(-rootConfig.chatStimulus.ledgerMaxCount);
     chatState.updatedAt = timePair(reconciledAtMs);
-    return { desireState, chatState, applied: false };
+    return { desireState, chatState, applied: stagedSettlement };
   }
   requireEpoch(nowMs, chatState.updatedAt.epochMs);
   decayInfluence(chatState, desireState, rootConfig.chatStimulus, nowMs);
   decayNegativeCauses(desireState, rootConfig, nowMs);
-  const deltas = boundedDeltas(interpreted, chatState, rootConfig.chatStimulus, nowMs);
+  const stagedSettlement = rootConfig.arousalDriveSettlementEnabled === true
+    ? stageSettlement(
+      chatState, interpreted, nowMs, rootConfig.chatStimulus.ledgerMaxCount,
+    ) : false;
+  const deltas = interpreted.settlementType === null
+    ? boundedDeltas(interpreted, chatState, rootConfig.chatStimulus, nowMs) : {};
   const causeContributions = {};
   if (interpreted.negativeCauseKind !== null) {
     for (const drive of NEGATIVE_CAUSE_DRIVES) {
@@ -481,6 +698,10 @@ export function applyChatStimulus(desireInput, chatInput, rootConfig, interprete
     deltas,
     at: timePair(nowMs),
     labels: interpreted.labels,
+    sexualClass: interpreted.sexualClass,
+    intensity: interpreted.intensity,
+    factFingerprint: interpreted.factFingerprint,
+    settlementType: interpreted.settlementType,
   }].slice(-rootConfig.chatStimulus.ledgerMaxCount);
   desireState.appliedChatEventIds = [
     ...(desireState.appliedChatEventIds ?? []), interpreted.eventId,
@@ -489,7 +710,7 @@ export function applyChatStimulus(desireInput, chatInput, rootConfig, interprete
   return {
     desireState,
     chatState,
-    applied: Object.keys(deltas).length > 0,
+    applied: Object.keys(deltas).length > 0 || stagedSettlement,
   };
 }
 

@@ -6,7 +6,12 @@ import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createAruDesireTurnHook } from '../aru-hook/aru-desire-turn-hook.mjs';
-import { createArousalState, publicArousalStatus } from '../src/arousal.mjs';
+import {
+  applyArousalEvent,
+  createArousalState,
+  publicArousalStatus,
+  setReleaseGate,
+} from '../src/arousal.mjs';
 import {
   CANONICAL_TURN_SCHEMA,
   canonicalEventId,
@@ -14,9 +19,16 @@ import {
   validateCanonicalTurnEvent,
 } from '../src/canonical-turn-event.mjs';
 import { createInitialState } from '../src/engine.mjs';
-import { createInteractionState } from '../src/interaction-runtime.mjs';
-import { initializeInteractionState, loadInteractionState } from '../src/interaction-storage.mjs';
-import { processCanonicalTurn } from '../src/turn-receiver.mjs';
+import {
+  createInteractionState,
+  processPersistedMessage,
+} from '../src/interaction-runtime.mjs';
+import {
+  atomicSaveInteractionState,
+  initializeInteractionState,
+  loadInteractionState,
+} from '../src/interaction-storage.mjs';
+import { processCanonicalTurn, recoverPendingSettlement } from '../src/turn-receiver.mjs';
 import { atomicSaveState, loadConfig, loadState } from '../src/storage.mjs';
 
 const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
@@ -115,6 +127,174 @@ test('affirmative stimulation changes Arousal while negation and questions do no
   });
   interaction = await loadInteractionState(fixture.directory, fixture.config);
   assert.ok(interaction.arousal.value > 0);
+});
+
+test('receiver production entry reaches all four settlements exactly once', async () => {
+  const cases = [
+    ['partnered-no', '老婆，我刚才亲密结束了，但我没有高潮。', 0.80],
+    ['partnered-release', '老婆，我刚才做爱结束了，我高潮了。', 0.30],
+    ['solo-no', '我刚刚自己解决完了，但没有高潮。', 0.80],
+    ['solo-release', '我刚刚自己解决完了，也高潮了。', 0.38],
+  ];
+  for (let index = 0; index < cases.length; index += 1) {
+    const [id, text, factor] = cases[index];
+    const fixture = await setup();
+    const desire = await loadState(fixture.directory, fixture.config);
+    desire.drives.libido = 0.80;
+    await atomicSaveState(fixture.directory, desire, fixture.config);
+    const current = event(id, text, START + index + 1);
+    const first = await processCanonicalTurn({ event: current, ...fixture });
+    assert.equal(first.status, 'settled');
+    const after = await loadState(fixture.directory, fixture.config);
+    assert.ok(Math.abs(after.drives.libido - 0.80 * factor) < 1e-12);
+    const replay = await processCanonicalTurn({ event: current, ...fixture });
+    assert.equal(replay.status, 'duplicate');
+    assert.equal((await loadState(fixture.directory, fixture.config)).drives.libido,
+      after.drives.libido);
+  }
+});
+
+test('receiver startup recovery completes a persisted settlement receipt once', async () => {
+  const fixture = await setup();
+  const desire = await loadState(fixture.directory, fixture.config);
+  desire.drives.libido = 0.80;
+  await atomicSaveState(fixture.directory, desire, fixture.config);
+  const interaction = await loadInteractionState(fixture.directory, fixture.config);
+  const staged = processPersistedMessage({
+    desireState: desire,
+    interactionState: interaction,
+    config: fixture.config,
+    message: canonicalToCompleteMessage(event(
+      'startup-recovery',
+      '老婆，我们刚才做爱结束了，我高潮了。',
+      START + 1,
+    )),
+  });
+  await atomicSaveState(fixture.directory, staged.desireState, fixture.config);
+  await atomicSaveInteractionState(
+    fixture.directory, staged.interactionState, fixture.config,
+  );
+  const first = await recoverPendingSettlement(fixture);
+  assert.equal(first.status, 'settled');
+  assert.ok(Math.abs(
+    (await loadState(fixture.directory, fixture.config)).drives.libido - 0.80 * 0.30,
+  ) < 1e-12);
+  const second = await recoverPendingSettlement(fixture);
+  assert.equal(second.status, 'no_op');
+});
+
+test('replay rebuilds a settlement lost before the first interaction-state save', async () => {
+  const fixture = await setup();
+  const desire = await loadState(fixture.directory, fixture.config);
+  desire.drives.libido = 0.80;
+  const interaction = await loadInteractionState(fixture.directory, fixture.config);
+  const current = event(
+    'crash-before-interaction-save',
+    '老婆，我们刚才做爱结束了，我高潮了。',
+    START + 1,
+  );
+  const staged = processPersistedMessage({
+    desireState: desire,
+    interactionState: interaction,
+    config: fixture.config,
+    message: canonicalToCompleteMessage(current),
+  });
+  assert.ok(staged.interactionState.chat.pendingSettlementReceipt);
+
+  // Model a stop after the receiver's first desire save but before its first
+  // interaction save. Replay must reconstruct and settle the lost receipt.
+  await atomicSaveState(fixture.directory, staged.desireState, fixture.config);
+  const first = await processCanonicalTurn({ event: current, ...fixture });
+  assert.equal(first.status, 'settled');
+  const after = await loadState(fixture.directory, fixture.config);
+  const afterInteraction = await loadInteractionState(fixture.directory, fixture.config);
+  assert.ok(Math.abs(after.drives.libido - 0.80 * 0.30) < 1e-12);
+  assert.equal(afterInteraction.chat.pendingSettlementReceipt, null);
+  assert.equal(afterInteraction.chat.settlementFacts.length, 1);
+
+  assert.equal(
+    (await processCanonicalTurn({ event: current, ...fixture })).status,
+    'duplicate',
+  );
+  assert.equal((await loadState(fixture.directory, fixture.config)).drives.libido,
+    after.drives.libido);
+});
+
+test('pending recovery does not consume the new canonical event that triggered it', async () => {
+  const fixture = await setup();
+  const desire = await loadState(fixture.directory, fixture.config);
+  desire.drives.libido = 0.80;
+  const interaction = await loadInteractionState(fixture.directory, fixture.config);
+  const pendingEvent = event(
+    'pending-before-new-event',
+    '老婆，我们刚才做爱结束了，我高潮了。',
+    START + 1,
+  );
+  const staged = processPersistedMessage({
+    desireState: desire,
+    interactionState: interaction,
+    config: fixture.config,
+    message: canonicalToCompleteMessage(pendingEvent),
+  });
+  await atomicSaveState(fixture.directory, staged.desireState, fixture.config);
+  await atomicSaveInteractionState(
+    fixture.directory, staged.interactionState, fixture.config,
+  );
+
+  const nextEvent = event(
+    'new-event-after-pending',
+    'I am sad and need support from you.',
+    START + 2,
+  );
+  const result = await processCanonicalTurn({ event: nextEvent, ...fixture });
+  assert.equal(result.status, 'applied');
+  const afterDesire = await loadState(fixture.directory, fixture.config);
+  const afterInteraction = await loadInteractionState(fixture.directory, fixture.config);
+  assert.ok(Math.abs(afterDesire.drives.libido - 0.80 * 0.30) < 1e-12);
+  assert.ok(afterDesire.drives.attachment > 0);
+  assert.ok(afterInteraction.chat.processedEvents.some(
+    (item) => item.eventId === nextEvent.event_id,
+  ));
+  assert.equal(afterInteraction.chat.pendingSettlementReceipt, null);
+});
+
+test('startup recovery also settles the older Arousal release receipt exactly once', async () => {
+  const fixture = await setup();
+  const desire = await loadState(fixture.directory, fixture.config);
+  desire.drives.libido = 0.80;
+  await atomicSaveState(fixture.directory, desire, fixture.config);
+  const interaction = await loadInteractionState(fixture.directory, fixture.config);
+  const releaseEvent = event('arousal-recovery', 'Synthetic release.', START + 1);
+  interaction.arousal.value = 0.99;
+  interaction.arousal = setReleaseGate(interaction.arousal, 'unlock');
+  interaction.arousal = applyArousalEvent(
+    interaction.arousal,
+    fixture.config.arousal,
+    {
+      eventId: releaseEvent.event_id,
+      stimuli: [{
+        action: 'climax', bodyPart: 'genitals', posture: 'neutral',
+        mode: 'active', direction: 'mutual', releaseSignal: true,
+      }],
+    },
+    0.80,
+    START + 1,
+  ).state;
+  assert.ok(interaction.arousal.pendingReleaseReceipt);
+  await atomicSaveInteractionState(fixture.directory, interaction, fixture.config);
+
+  const first = await recoverPendingSettlement(fixture);
+  assert.equal(first.status, 'settled');
+  assert.ok(Math.abs(
+    (await loadState(fixture.directory, fixture.config)).drives.libido -
+      0.80 * fixture.config.arousal.releaseCarryoverFactor,
+  ) < 1e-12);
+  assert.equal(
+    (await loadInteractionState(fixture.directory, fixture.config))
+      .arousal.pendingReleaseReceipt,
+    null,
+  );
+  assert.equal((await recoverPendingSettlement(fixture)).status, 'no_op');
 });
 
 test('interaction initialization is owner-only and public Arousal remains nine fields', async () => {

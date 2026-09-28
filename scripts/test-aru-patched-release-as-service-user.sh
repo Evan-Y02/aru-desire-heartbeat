@@ -31,14 +31,27 @@ chmod 0755 "$TEST_ROOT"
 cp -a "$CURRENT_RELEASE" "$TEST_RELEASE"
 install -o root -g root -m 0755 "$SOURCE_ROOT/aru-hook/aru-desire-turn-hook.mjs" \
   "$TEST_RELEASE/aru-desire-turn-hook.mjs"
+install -o root -g root -m 0644 "$SOURCE_ROOT/aru-hook/aru-desire-relay-turn.mjs" \
+  "$TEST_RELEASE/aru-desire-relay-turn.mjs"
 readonly ORIGINAL_METADATA=$(stat -c '%u:%g:%a' "$TEST_RELEASE/server.mjs")
+readonly ORIGINAL_RELAY_METADATA=$(stat -c '%u:%g:%a' \
+  "$TEST_RELEASE/conversation-turn-relay.mjs")
 
-node "$SOURCE_ROOT/aru-hook/apply-server-wiring.mjs" "$TEST_RELEASE/server.mjs"
+node "$SOURCE_ROOT/aru-hook/apply-server-wiring.mjs" \
+  "$TEST_RELEASE/server.mjs" "$TEST_RELEASE/conversation-turn-relay.mjs"
 chown --reference="$CURRENT_RELEASE/server.mjs" "$TEST_RELEASE/server.mjs"
 chmod --reference="$CURRENT_RELEASE/server.mjs" "$TEST_RELEASE/server.mjs"
+chown --reference="$CURRENT_RELEASE/conversation-turn-relay.mjs" \
+  "$TEST_RELEASE/conversation-turn-relay.mjs"
+chmod --reference="$CURRENT_RELEASE/conversation-turn-relay.mjs" \
+  "$TEST_RELEASE/conversation-turn-relay.mjs"
 [[ $(stat -c '%u:%g:%a' "$TEST_RELEASE/server.mjs") == "$ORIGINAL_METADATA" ]]
+[[ $(stat -c '%u:%g:%a' "$TEST_RELEASE/conversation-turn-relay.mjs") == \
+  "$ORIGINAL_RELAY_METADATA" ]]
 runuser -u "$SERVICE_USER" -g "$SERVICE_GROUP" -- \
   node --check "$TEST_RELEASE/server.mjs" >/dev/null
+runuser -u "$SERVICE_USER" -g "$SERVICE_GROUP" -- \
+  node --check "$TEST_RELEASE/conversation-turn-relay.mjs" >/dev/null
 
 install -d -o "$SERVICE_USER" -g "$SERVICE_GROUP" -m 0700 "$TEST_DATA" "$TEST_HOME"
 readonly PORT=$(node -e '

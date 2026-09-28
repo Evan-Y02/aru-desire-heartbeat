@@ -264,13 +264,22 @@ install -o root -g root -m 0755 "$SOURCE_ROOT/aru-hook/aru-desire-turn-hook.mjs"
   "$NEW_RELEASE/aru-desire-turn-hook.mjs"
 install -o root -g root -m 0755 "$SOURCE_ROOT/aru-hook/synthetic-check.mjs" \
   "$NEW_RELEASE/synthetic-check.mjs"
-node "$SOURCE_ROOT/aru-hook/apply-server-wiring.mjs" "$NEW_RELEASE/server.mjs"
+install -o root -g root -m 0644 "$SOURCE_ROOT/aru-hook/aru-desire-relay-turn.mjs" \
+  "$NEW_RELEASE/aru-desire-relay-turn.mjs"
+node "$SOURCE_ROOT/aru-hook/apply-server-wiring.mjs" \
+  "$NEW_RELEASE/server.mjs" "$NEW_RELEASE/conversation-turn-relay.mjs"
 chown --reference="$OLD_RELEASE/server.mjs" "$NEW_RELEASE/server.mjs"
 chmod --reference="$OLD_RELEASE/server.mjs" "$NEW_RELEASE/server.mjs"
+chown --reference="$OLD_RELEASE/conversation-turn-relay.mjs" \
+  "$NEW_RELEASE/conversation-turn-relay.mjs"
+chmod --reference="$OLD_RELEASE/conversation-turn-relay.mjs" \
+  "$NEW_RELEASE/conversation-turn-relay.mjs"
 [[ $(stat -c '%u:%g:%a' "$NEW_RELEASE/server.mjs") == \
   "$(stat -c '%u:%g:%a' "$OLD_RELEASE/server.mjs")" ]]
 node --check "$NEW_RELEASE/server.mjs"
 node --check "$NEW_RELEASE/aru-desire-turn-hook.mjs"
+node --check "$NEW_RELEASE/aru-desire-relay-turn.mjs"
+node --check "$NEW_RELEASE/conversation-turn-relay.mjs"
 node --check "$NEW_RELEASE/synthetic-check.mjs"
 
 INSTALL_STAGE=stage_desire_runtime

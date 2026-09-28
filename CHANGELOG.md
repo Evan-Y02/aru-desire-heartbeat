@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.9.9
+
+- Add mutually exclusive `neutral_discussion`, `flirt_tease`, `direct_desire`,
+  `sexual_explicit`, and `concrete_intimate_action` classification with
+  combination/context rules instead of single sensitive-word activation.
+- Keep libido and Arousal separate: chat libido increments are 0, 0.020, 0.050,
+  0.080, and 0.080 with the existing 0.24 hourly cap; immediate Arousal retains
+  its action/body/posture/libido formula, 1.0 clamp, and 0.72 passive cap.
+- Make `partnered_no_release`, `partnered_release`, `solo_no_release`, and
+  `solo_release` reachable from the complete-message receiver with carryovers
+  0.80, 0.30, 0.80, and 0.38.
+- Give settlement precedence over stimulation; correlate user/assistant
+  restatements by a text-free fact fingerprint; support one no-release-to-release
+  upgrade; and prevent partnered/Solo double settlement.
+- Persist and recover pending settlement receipts idempotently, including at
+  receiver startup, without storing message text.
+- Feed supported conversation-turn relay completions into the same canonical
+  hook used by collaborator-host while preserving the existing stir callback.
+- Migrate v0.9.8 interaction state in memory by adding empty settlement fields
+  and normalized qualitative event metadata.
+
 ## 0.9.8
 
 - Track relationship conflict, task pressure, fatigue burden, and other stress as

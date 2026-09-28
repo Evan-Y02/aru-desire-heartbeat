@@ -2,11 +2,11 @@
 
 ## Boundary and wiring status
 
-The current repository has one outbound Aru integration: the encrypted
-external-trigger sender. It has no supported inbound callback for a durably
-stored user message or a completed assistant final. No Host credential,
-conversation store, stream, or private runtime state is inspected to manufacture
-one.
+The complete-message hook is wired to completed collaborator-host turns and to
+supported completed conversation-turn relay responses. Both sources produce the
+same canonical schema and reach the same loopback receiver. The relay adapter
+uses only the in-memory provider request and the already-durable final response;
+it never adds conversation text to relay state or diagnostics.
 
 `src/interaction-runtime.mjs` is the formal inbound adapter boundary. A future
 supported Aru hook must call `processPersistedMessage` only after committing a
@@ -28,6 +28,14 @@ persistent record.
 - `src/chat-stimulus.mjs` performs deterministic context filtering, event
   classification, bounded drive changes, decay, replay protection, qualitative
   flits, and a bounded ambiguous-event queue.
+- Sexual classification is mutually exclusive: `neutral_discussion`,
+  `flirt_tease`, `direct_desire`, `sexual_explicit`, or
+  `concrete_intimate_action`. Combination rules require directed participants
+  and context; isolated sensitive words are insufficient.
+- Completed settlement facts have priority and are mutually exclusive:
+  `partnered_no_release`, `partnered_release`, `solo_no_release`, or
+  `solo_release`. A stable text-free fact fingerprint links the user event and
+  its assistant restatement.
 - Negative effects are represented in the existing desire state as bounded,
   text-free cause records containing only a stable event-derived ID, kind,
   timestamps, initial and remaining contribution, and status. Heartbeats decay
@@ -58,7 +66,9 @@ new gates disabled. Existing desire state is normalized in memory with an empty
 cause ledger and a decay clock copied from its last heartbeat when those fields
 are absent. Interaction state is created explicitly only when a supported inbound
 hook is available and the feature is intentionally activated; initialization
-refuses to overwrite an existing file.
+refuses to overwrite an existing file. A v0.9.8 interaction state gains empty
+`settlementFacts` and `pendingSettlementReceipt` fields in memory, while its
+existing event ledgers and body state remain unchanged.
 
 The committed defaults are:
 
@@ -74,6 +84,7 @@ valid partnered release. Solo retains 0.38 after release, with output and reserv
 cost multipliers of 0.80 and the existing three-hour cooldown. Settlement remains
 inert while its feature gate is off.
 
-Activation still requires a supported complete-message hook, an authorized Solo
-generation turn, explicit private-state initialization, and deliberate gate
-changes. None of these actions is performed by this change.
+Classified Solo completion does not require the optional generated Solo Session
+layer. It reports an already-completed event through the same protected receiver
+receipt boundary. Installation and gate changes remain deliberate; building
+this release performs neither.

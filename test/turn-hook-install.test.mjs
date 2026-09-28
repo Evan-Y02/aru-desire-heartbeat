@@ -3,13 +3,18 @@ import assert from 'node:assert/strict';
 import {
   chmod, copyFile, mkdir, mkdtemp, readFile, readlink, rename, rm, stat, symlink, writeFile,
 } from 'node:fs/promises';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn, spawnSync as rawSpawnSync } from 'node:child_process';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+function spawnSync(command, args, options = {}) {
+  const environment = { ...process.env, ...options.env };
+  delete environment.NODE_TEST_CONTEXT;
+  return rawSpawnSync(command, args, { ...options, env: environment });
+}
 const directories = [];
 test.after(async () => Promise.all(directories.map((directory) =>
   rm(directory, { recursive: true, force: true }))));
@@ -65,12 +70,17 @@ test('isolated install rehearsal preserves service-readable config and restores 
   await chmod(directory, 0o700);
   const config = path.join(directory, 'default.json');
   const server = path.join(directory, 'server.mjs');
+  const relay = path.join(directory, 'conversation-turn-relay.mjs');
   const baseline = path.join(directory, 'server.baseline.mjs');
+  const relayBaseline = path.join(directory, 'relay.baseline.mjs');
   await copyFile(path.join(ROOT, 'config/default.json'), config);
   await copyFile('/opt/aru-selfhost/current/server.mjs', server);
+  await copyFile('/opt/aru-selfhost/current/conversation-turn-relay.mjs', relay);
   await copyFile(server, baseline);
+  await copyFile(relay, relayBaseline);
   await chmod(server, 0o755);
   const serverBefore = await stat(server);
+  const relayBefore = await stat(relay);
 
   const flags = spawnSync('/bin/bash', [
     '-c', 'umask 077; exec "$@"', 'rehearsal', process.execPath,
@@ -89,28 +99,43 @@ test('isolated install rehearsal preserves service-readable config and restores 
 
   const patch = spawnSync('/bin/bash', [
     '-c', 'umask 077; exec "$@"', 'patch-rehearsal', process.execPath,
-    path.join(ROOT, 'aru-hook/apply-server-wiring.mjs'), server,
+    path.join(ROOT, 'aru-hook/apply-server-wiring.mjs'), server, relay,
   ], { stdio: 'pipe' });
   assert.equal(patch.status, 0, patch.stderr.toString());
   const serverAfter = await stat(server);
   assert.equal(serverAfter.uid, serverBefore.uid);
   assert.equal(serverAfter.gid, serverBefore.gid);
   assert.equal(serverAfter.mode & 0o7777, serverBefore.mode & 0o7777);
+  const relayAfter = await stat(relay);
+  assert.equal(relayAfter.uid, relayBefore.uid);
+  assert.equal(relayAfter.gid, relayBefore.gid);
+  assert.equal(relayAfter.mode & 0o7777, relayBefore.mode & 0o7777);
   const syntax = spawnSync(process.execPath, ['--check', server], { stdio: 'pipe' });
   assert.equal(syntax.status, 0, syntax.stderr.toString());
+  const relaySyntax = spawnSync(process.execPath, ['--check', relay], { stdio: 'pipe' });
+  assert.equal(relaySyntax.status, 0, relaySyntax.stderr.toString());
   const patchedSource = await readFile(server, 'utf8');
+  const patchedRelay = await readFile(relay, 'utf8');
   assert.doesNotMatch(patchedSource, /pairingToken: state\.pairing\.token/u);
   assert.doesNotMatch(patchedSource, /console\.log\(pairingURL\)/u);
   assert.match(patchedSource, /startup logs never include credentials/u);
+  assert.match(patchedSource, /candidate\?\.outcome === "completed"/u);
+  assert.match(patchedRelay, /buildAruDesireRelayTurn/u);
 
   const repeatPatch = spawnSync(process.execPath, [
-    path.join(ROOT, 'aru-hook/apply-server-wiring.mjs'), server,
+    path.join(ROOT, 'aru-hook/apply-server-wiring.mjs'), server, relay,
   ], { stdio: 'pipe' });
   assert.equal(repeatPatch.status, 0, repeatPatch.stderr.toString());
   assert.deepEqual(await readFile(server), Buffer.from(patchedSource));
+  assert.deepEqual(await readFile(relay), Buffer.from(patchedRelay));
 
   await copyFile(baseline, server);
+  await copyFile(relayBaseline, relay);
   assert.deepEqual(await readFile(server), await readFile('/opt/aru-selfhost/current/server.mjs'));
+  assert.deepEqual(
+    await readFile(relay),
+    await readFile('/opt/aru-selfhost/current/conversation-turn-relay.mjs'),
+  );
 });
 
 test('installer retains fail-closed rollback and never broadens permissions', async () => {
@@ -211,7 +236,8 @@ test('runtime release closure starts at the real heartbeat entry and rejects eve
     'src/engine.mjs', 'src/runtime.mjs', 'src/timeline.mjs',
     'src/pending-decision.mjs', 'scripts/local-import-closure.mjs',
     'scripts/runtime-release-manifest.mjs',
-  ]) assert.ok(files.includes(required), `${required} absent from runtime release`);
+  ]) assert.ok(files.includes(required),
+    `${required} absent from runtime release: ${JSON.stringify(listing.stdout)}`);
 
   const directory = await mkdtemp(path.join(tmpdir(), 'runtime-release-verifier-'));
   directories.push(directory);
@@ -266,7 +292,7 @@ test('independent runtime manifest covers the exact closure and rejects absence 
   const parsed = JSON.parse(await readFile(manifest, 'utf8'));
   const packageMetadata = JSON.parse(await readFile(path.join(ROOT, 'package.json'), 'utf8'));
   assert.equal(parsed.schema, 'aru.desire-heartbeat.file-manifest.v1');
-  assert.equal(packageMetadata.version, '0.9.8');
+  assert.equal(packageMetadata.version, '0.9.9');
   assert.equal(parsed.version, packageMetadata.version);
   assert.equal(parsed.fileCount, files.length);
   assert.deepEqual(parsed.files.map((file) => file.path), files);

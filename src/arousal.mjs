@@ -4,6 +4,9 @@ import { ValidationError } from './schema.mjs';
 export const AROUSAL_STATE_SCHEMA = 'aru.desire-heartbeat.arousal-state.v1';
 const GATES = new Set(['locked', 'unlocked', 'release_once']);
 const ACTION_MULTIPLIERS = Object.freeze({
+  flirt: 0.12,
+  desire: 0.30,
+  explicit: 0.48,
   contact: 0.24,
   hold: 0.34,
   kiss: 0.55,
@@ -143,6 +146,33 @@ function deterministicRefractory(eventId, config) {
     config.refractoryMinSeconds +
     unit * (config.refractoryMaxSeconds - config.refractoryMinSeconds),
   );
+}
+
+export function applyReportedReleaseArousal(input, config, {
+  eventId, cause, nowMs, outputMultiplier = 1, reserveCostMultiplier = 1,
+}) {
+  const state = structuredClone(validateArousalState(input));
+  if (typeof eventId !== 'string' || !/^event-[a-f0-9]{64}$/u.test(eventId) ||
+      !['solo', 'partnered'].includes(cause)) {
+    throw new ValidationError('reported release is invalid', 'AROUSAL_EVENT_INVALID');
+  }
+  requireTime(nowMs, state.updatedAt.epochMs);
+  advanceBody(state, config, nowMs);
+  const effective = Math.max(state.value, config.ponr);
+  const quality = clamp(0.70 + (effective - config.ponr) * 4 + 0.035);
+  const baseOutput = clamp(state.reserve * (0.30 + quality * 0.70));
+  const output = clamp(baseOutput * outputMultiplier);
+  const reserveCost = clamp(baseOutput * reserveCostMultiplier);
+  state.lastClimaxQuality = quality;
+  state.lastOutput = output;
+  state.reserve = clamp(state.reserve - reserveCost);
+  state.reserveAt = timePair(nowMs);
+  state.refractoryUntil = timePair(
+    nowMs + deterministicRefractory(eventId, config) * 1000,
+  );
+  state.value = clamp(0.10 + effective * 0.08);
+  state.releaseGate = 'locked';
+  return state;
 }
 
 function normalizeStimuli(stimuli) {

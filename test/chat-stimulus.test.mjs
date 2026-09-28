@@ -69,7 +69,9 @@ test('ordinary persisted message is a no-op without raw-text persistence', () =>
   assert.deepEqual(result.desireState.drives, state.desireState.drives);
   const serialized = JSON.stringify(result.interactionState);
   assert.doesNotMatch(serialized, /package arrived/u);
-  assert.deepEqual(result.interpreted.types, []);
+  assert.deepEqual(result.interpreted.types, ['neutral_discussion']);
+  assert.equal(result.interpreted.sexualClass, 'neutral_discussion');
+  assert.equal(result.interpreted.intensity, 0);
 });
 
 test('relationship and emotion events are applied only once', () => {
@@ -137,7 +139,10 @@ test('questions, negation, plans, quotes, code, memories, and third person do no
       state, samples[index], `excluded-${index}`, START + index + 1,
     );
     assert.deepEqual(result.desireState.drives, state.desireState.drives);
-    assert.deepEqual(result.interpreted.types, []);
+    assert.deepEqual(result.interpreted.types, ['neutral_discussion']);
+    assert.equal(result.interpreted.sexualClass, 'neutral_discussion');
+    assert.equal(result.interpreted.intensity, 0);
+    assert.equal(result.status, 'no_op');
     state = {
       config: state.config,
       desireState: result.desireState,

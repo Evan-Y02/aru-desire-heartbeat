@@ -7,18 +7,22 @@ owner-only copies of one generated local secret are installed, one readable by
 each service. The value is never placed in a unit, command line, event, log, or
 diagnostic response.
 
-`aru-desire-turn-hook.mjs` wraps the existing post-save `onTurnSettled`
-callback. It invokes and returns the existing remote-push callback first, then
-delivers the canonical user event followed by the canonical assistant final.
+`aru-desire-turn-hook.mjs` wraps the collaborator-host post-save
+`onTurnSettled` callback. The supported conversation-turn relay also emits an
+in-memory completed-turn record after its response has been durably renamed;
+its existing qualitative stir callback remains unchanged. Both paths deliver
+the canonical user event followed by the canonical assistant final.
 It performs at most one bounded retry, uses a bounded configurable attempt
-timeout (1000 ms in the production unit), and never throws into the conversation
+timeout (250 ms in the production unit), and never throws into the conversation
 path. Diagnostics contain counters and error categories only.
 
 The Desire receiver validates the exact canonical schema, stable SHA-256 event
 identity, role, completion marker, time, field lengths, and a 20,000-byte text
 limit. Source text exists only in the request and interpreter call. Atomic state
-writes contain only event IDs, qualitative labels, bounded deltas, body state,
-and receipt/effect ledgers.
+writes contain only event IDs, qualitative labels and strengths, bounded deltas,
+body state, text-free fact fingerprints, and receipt/effect ledgers. Pending
+settlement receipts are recovered before duplicate short-circuiting and once at
+receiver startup.
 
 `install-complete-message-hook-once.sh` creates a timestamped code-only backup,
 builds a new Aru release instead of editing the active release in place,
@@ -29,8 +33,7 @@ configuration, owner-only hook secret files, interaction state, and prior
 service activity without printing secret values. Conversation content is never
 written to the backup.
 
-Solo Sessions remain disabled because the current heartbeat Solo branch has no
-authorized model-final callback that accepts the generation contract. Existing
-hosted reply and separate conversation-desire flows are not repurposed: doing so
-would change protected reply/initiative behavior rather than reuse the same
-30–120 minute Solo selection turn.
+Generated Solo Sessions remain disabled by default. Classified reports of an
+already-completed Solo event are separate from that generation feature and can
+reach settlement through the authenticated receiver when the existing
+interaction gates are enabled.
