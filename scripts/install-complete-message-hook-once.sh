@@ -34,8 +34,12 @@ readonly SOURCE_ROOT=${1:-/home/xinchao/private/ChengXiao/desire-heartbeat}
 readonly CURRENT_LINK=/opt/aru-selfhost/current
 OLD_RELEASE=$(readlink -f "$CURRENT_LINK")
 readonly OLD_RELEASE
-STAMP=$(date -u +%Y%m%dT%H%M%SZ)
+INSTALL_EPOCH=$(date -u +%s)
+readonly INSTALL_EPOCH
+STAMP=$(date -u -d "@$INSTALL_EPOCH" +%Y%m%dT%H%M%SZ)
 readonly STAMP
+INSTALLED_AT=$(date -u -d "@$INSTALL_EPOCH" +%Y-%m-%dT%H:%M:%SZ)
+readonly INSTALLED_AT
 readonly NEW_RELEASE="/opt/aru-selfhost/releases/v0.30.2-pairing-hotfix1-turn-hook-${STAMP}"
 readonly BACKUP="/var/backups/aru-desire-turn-hook/${STAMP}"
 readonly DESIRE_ROOT=/opt/aru-desire-heartbeat
@@ -44,6 +48,11 @@ readonly ARU_SECRET=/var/lib/aru-selfhost/desire-turn-hook.secret
 readonly DESIRE_SECRET=${DESIRE_DATA}/turn-hook.secret
 readonly RECEIVER_UNIT=/etc/systemd/system/aru-desire-turn-receiver.service
 readonly ARU_DROPIN=/etc/systemd/system/aru-selfhost.service.d/desire-turn-hook.conf
+readonly HEARTBEAT_SERVICE=aru-desire-heartbeat.service
+readonly HEARTBEAT_TIMER=aru-desire-heartbeat.timer
+readonly RUNTIME_MANIFEST=release-manifest.json
+readonly DEPLOYMENT_METADATA=deployment-metadata.json
+HEARTBEAT_TIMER_TOUCHED=false
 ARU_WAS_ACTIVE=$(systemctl is-active aru-selfhost.service || true)
 readonly ARU_WAS_ACTIVE
 DASHBOARD_WAS_ACTIVE=$(systemctl is-active aru-desire-dashboard.service || true)
@@ -52,7 +61,12 @@ RECEIVER_WAS_ACTIVE=$(systemctl is-active aru-desire-turn-receiver.service || tr
 readonly RECEIVER_WAS_ACTIVE
 RECEIVER_WAS_ENABLED=$(systemctl is-enabled aru-desire-turn-receiver.service 2>/dev/null || true)
 readonly RECEIVER_WAS_ENABLED
+HEARTBEAT_TIMER_WAS_ACTIVE=$(systemctl is-active "$HEARTBEAT_TIMER" || true)
+readonly HEARTBEAT_TIMER_WAS_ACTIVE
+HEARTBEAT_TIMER_WAS_ENABLED=$(systemctl is-enabled "$HEARTBEAT_TIMER" 2>/dev/null || true)
+readonly HEARTBEAT_TIMER_WAS_ENABLED
 INSTALL_STAGE=baseline_health
+[[ -d $SOURCE_ROOT && ! -L $SOURCE_ROOT ]]
 grep -q -F 'startup logs never include credentials' "$OLD_RELEASE/server.mjs"
 ! grep -q -F 'pairingToken: state.pairing.token' "$OLD_RELEASE/server.mjs"
 ! grep -q -F 'console.log(pairingURL)' "$OLD_RELEASE/server.mjs"
@@ -81,18 +95,25 @@ NODE
 fi
 readonly SECRET_CHANNEL_BEFORE
 
-receiver_closure_output=$(node "$SOURCE_ROOT/scripts/local-import-closure.mjs" \
-  "$SOURCE_ROOT" bin/desire-turn-receiver.mjs bin/desire-interaction-init.mjs \
-  scripts/set-interaction-flags.mjs scripts/verify-synthetic-ledger.mjs)
-mapfile -t RECEIVER_CLOSURE <<< "$receiver_closure_output"
-unset receiver_closure_output
-[[ ${#RECEIVER_CLOSURE[@]} -gt 0 ]]
-readonly DESIRE_FILES=(
+runtime_release_output=$(node "$SOURCE_ROOT/scripts/verify-runtime-release.mjs" \
+  list "$SOURCE_ROOT")
+mapfile -t RUNTIME_RELEASE_FILES <<< "$runtime_release_output"
+unset runtime_release_output
+[[ ${#RUNTIME_RELEASE_FILES[@]} -gt 0 ]]
+for required in src/engine.mjs src/runtime.mjs src/timeline.mjs src/pending-decision.mjs; do
+  [[ " ${RUNTIME_RELEASE_FILES[*]} " == *" $required "* ]]
+done
+readonly RUNTIME_COPY_FILES=(
   config/default.json
-  "${RECEIVER_CLOSURE[@]}"
-  dashboard/server.py dashboard/public/app.js dashboard/public/index.html dashboard/public/styles.css
+  "${RUNTIME_RELEASE_FILES[@]}"
+)
+readonly DESIRE_FILES=(
+  "${RUNTIME_COPY_FILES[@]}"
+  "$RUNTIME_MANIFEST"
+  "$DEPLOYMENT_METADATA"
 )
 readonly DATA_FILES=(state.json interaction-state.json)
+[[ -f $DESIRE_ROOT/config/aru-delivery.json && ! -L $DESIRE_ROOT/config/aru-delivery.json ]]
 
 INSTALL_STAGE=isolated_aru_service_identity_preflight
 bash "$SOURCE_ROOT/scripts/test-aru-patched-release-as-service-user.sh" "$SOURCE_ROOT"
@@ -100,6 +121,8 @@ bash "$SOURCE_ROOT/scripts/test-aru-patched-release-as-service-user.sh" "$SOURCE
 INSTALL_STAGE=backup
 mkdir -p "$BACKUP/aru" "$BACKUP/desire" "$BACKUP/systemd"
 chmod 0700 "$BACKUP"
+node "$SOURCE_ROOT/scripts/preserve-feature-flags.mjs" capture \
+  "$DESIRE_ROOT/config/default.json" "$BACKUP/feature-flags.json"
 cp -a "$OLD_RELEASE/server.mjs" "$BACKUP/aru/server.mjs"
 printf '%s\n' "$OLD_RELEASE" > "$BACKUP/aru/previous-release"
 for file in "${DESIRE_FILES[@]}"; do
@@ -142,7 +165,12 @@ rollback() {
     # unit returns non-zero and leaves a broken wants/ symlink.
     rollback_run disable_staged_receiver systemctl disable aru-desire-turn-receiver.service
   fi
+  rollback_run remove_staged_current_link rm -f "${CURRENT_LINK}.next"
   rollback_run remove_temporary_current_link rm -f "${CURRENT_LINK}.rollback"
+  rollback_run remove_temporary_deployment_metadata rm -f \
+    "$DESIRE_ROOT/${DEPLOYMENT_METADATA}.next"
+  rollback_run remove_temporary_runtime_manifest rm -f \
+    "$DESIRE_ROOT/${RUNTIME_MANIFEST}.next"
   rollback_run create_previous_current_link ln -s "$OLD_RELEASE" "${CURRENT_LINK}.rollback"
   rollback_run activate_previous_release mv -Tf "${CURRENT_LINK}.rollback" "$CURRENT_LINK"
   for file in "${DESIRE_FILES[@]}"; do
@@ -206,8 +234,29 @@ rollback() {
   else
     rollback_run restore_dashboard_inactive systemctl stop aru-desire-dashboard.service
   fi
+  if [[ $HEARTBEAT_TIMER_TOUCHED == true ]]; then
+    if [[ $HEARTBEAT_TIMER_WAS_ACTIVE == active ]]; then
+      rollback_run restore_heartbeat_timer_active systemctl start "$HEARTBEAT_TIMER"
+    else
+      rollback_run restore_heartbeat_timer_inactive systemctl stop "$HEARTBEAT_TIMER"
+    fi
+    restored_timer_enabled=$(systemctl is-enabled "$HEARTBEAT_TIMER" 2>/dev/null || true)
+    [[ $restored_timer_enabled == "$HEARTBEAT_TIMER_WAS_ENABLED" ]] || {
+      printf 'ERROR: rollback step failed: restore_heartbeat_timer_enabled_state\n' >&2
+      rollback_failed=1
+    }
+  fi
   return "$rollback_failed"
 }
+
+INSTALL_STAGE=quiesce_heartbeat
+HEARTBEAT_TIMER_TOUCHED=true
+systemctl stop "$HEARTBEAT_TIMER"
+for _ in {1..50}; do
+  [[ $(systemctl is-active "$HEARTBEAT_SERVICE" || true) != active ]] && break
+  sleep 0.1
+done
+[[ $(systemctl is-active "$HEARTBEAT_SERVICE" || true) != active ]]
 
 INSTALL_STAGE=stage_aru_release
 cp -a "$OLD_RELEASE" "$NEW_RELEASE"
@@ -225,11 +274,41 @@ node --check "$NEW_RELEASE/aru-desire-turn-hook.mjs"
 node --check "$NEW_RELEASE/synthetic-check.mjs"
 
 INSTALL_STAGE=stage_desire_runtime
-for file in "${DESIRE_FILES[@]}"; do
+for file in "${RUNTIME_COPY_FILES[@]}"; do
   mode=0644
   [[ $file == bin/* || $file == scripts/* ]] && mode=0755
   install -D -o root -g root -m "$mode" "$SOURCE_ROOT/$file" "$DESIRE_ROOT/$file"
 done
+INSTALL_STAGE=verify_desire_runtime_release
+node "$SOURCE_ROOT/scripts/verify-runtime-release.mjs" verify \
+  "$SOURCE_ROOT" "$DESIRE_ROOT" >/dev/null
+INSTALL_STAGE=create_runtime_release_manifest
+node "$SOURCE_ROOT/scripts/runtime-release-manifest.mjs" create \
+  "$SOURCE_ROOT" > "$BACKUP/runtime-release-manifest.new.json"
+chmod 0600 "$BACKUP/runtime-release-manifest.new.json"
+node "$SOURCE_ROOT/scripts/runtime-release-manifest.mjs" verify \
+  "$SOURCE_ROOT" "$BACKUP/runtime-release-manifest.new.json" >/dev/null
+install -o root -g root -m 0644 "$BACKUP/runtime-release-manifest.new.json" \
+  "$DESIRE_ROOT/${RUNTIME_MANIFEST}.next"
+node "$SOURCE_ROOT/scripts/runtime-release-manifest.mjs" verify \
+  "$DESIRE_ROOT" "$DESIRE_ROOT/${RUNTIME_MANIFEST}.next" >/dev/null
+mv -Tf "$DESIRE_ROOT/${RUNTIME_MANIFEST}.next" "$DESIRE_ROOT/$RUNTIME_MANIFEST"
+install -o root -g root -m 0644 "$BACKUP/runtime-release-manifest.new.json" \
+  "$NEW_RELEASE/$RUNTIME_MANIFEST"
+node "$SOURCE_ROOT/scripts/formal-release-layout.mjs" create \
+  "$NEW_RELEASE" "$OLD_RELEASE" "$BACKUP" "$INSTALLED_AT" \
+  > "$BACKUP/deployment-metadata.new.json"
+chmod 0600 "$BACKUP/deployment-metadata.new.json"
+node "$SOURCE_ROOT/scripts/formal-release-layout.mjs" metadata \
+  "$BACKUP/deployment-metadata.new.json" >/dev/null
+INSTALL_STAGE=verify_runtime_manifest_before_current_activation
+node "$DESIRE_ROOT/scripts/runtime-release-manifest.mjs" verify \
+  "$DESIRE_ROOT" "$DESIRE_ROOT/$RUNTIME_MANIFEST" >/dev/null
+node "$DESIRE_ROOT/scripts/runtime-release-manifest.mjs" verify \
+  "$DESIRE_ROOT" "$NEW_RELEASE/$RUNTIME_MANIFEST" >/dev/null
+cmp -s -- "$DESIRE_ROOT/$RUNTIME_MANIFEST" "$NEW_RELEASE/$RUNTIME_MANIFEST"
+[[ $(stat -c '%U:%G:%a:%h' "$DESIRE_ROOT/$RUNTIME_MANIFEST") == 'root:root:644:1' ]]
+[[ $(stat -c '%U:%G:%a:%h' "$NEW_RELEASE/$RUNTIME_MANIFEST") == 'root:root:644:1' ]]
 node "$DESIRE_ROOT/scripts/set-interaction-flags.mjs" "$DESIRE_ROOT/config/default.json" \
   chatStimulusEnabled=false arousalEnabled=false \
   arousalDriveSettlementEnabled=false soloSessionsEnabled=false
@@ -252,8 +331,27 @@ fi
 
 install -o root -g root -m 0644 "$SOURCE_ROOT/systemd/aru-desire-turn-receiver.service" "$RECEIVER_UNIT"
 install -D -o root -g root -m 0644 "$SOURCE_ROOT/systemd/aru-selfhost-desire-turn-hook.conf" "$ARU_DROPIN"
+cmp -s -- "$SOURCE_ROOT/systemd/aru-desire-turn-receiver.service" "$RECEIVER_UNIT"
+cmp -s -- "$SOURCE_ROOT/systemd/aru-selfhost-desire-turn-hook.conf" "$ARU_DROPIN"
+node "$SOURCE_ROOT/scripts/verify-runtime-release.mjs" verify \
+  "$SOURCE_ROOT" "$DESIRE_ROOT" >/dev/null
+node "$DESIRE_ROOT/scripts/runtime-release-manifest.mjs" verify \
+  "$DESIRE_ROOT" "$DESIRE_ROOT/$RUNTIME_MANIFEST" >/dev/null
+INSTALL_STAGE=prepare_current_release
+[[ ! -e ${CURRENT_LINK}.next && ! -L ${CURRENT_LINK}.next ]]
 ln -s "$NEW_RELEASE" "${CURRENT_LINK}.next"
+[[ $(readlink -f "${CURRENT_LINK}.next") == "$NEW_RELEASE" ]]
+INSTALL_STAGE=activate_current_release
 mv -Tf "${CURRENT_LINK}.next" "$CURRENT_LINK"
+INSTALL_STAGE=activate_deployment_metadata
+install -o root -g root -m 0644 "$BACKUP/deployment-metadata.new.json" \
+  "$DESIRE_ROOT/${DEPLOYMENT_METADATA}.next"
+mv -Tf "$DESIRE_ROOT/${DEPLOYMENT_METADATA}.next" \
+  "$DESIRE_ROOT/$DEPLOYMENT_METADATA"
+INSTALL_STAGE=verify_runtime_manifest_after_current_activation
+node "$SOURCE_ROOT/scripts/formal-release-layout.mjs" verify \
+  "$CURRENT_LINK" "$DESIRE_ROOT" "$DESIRE_ROOT/$DEPLOYMENT_METADATA" >/dev/null
+[[ $(stat -c '%U:%G:%a:%h' "$DESIRE_ROOT/$DEPLOYMENT_METADATA") == 'root:root:644:1' ]]
 systemctl daemon-reload
 INSTALL_STAGE=start_receiver
 systemctl enable --now aru-desire-turn-receiver.service
@@ -296,24 +394,58 @@ readonly BRIDGE_CODE_AFTER
 [[ $BRIDGE_CODE_AFTER == "$BRIDGE_CODE_BEFORE" ]]
 
 INSTALL_STAGE=enable_interaction_flags
-node "$DESIRE_ROOT/scripts/set-interaction-flags.mjs" "$DESIRE_ROOT/config/default.json" \
-  chatStimulusEnabled=true arousalEnabled=true \
-  arousalDriveSettlementEnabled=true soloSessionsEnabled=false
-node -e "const c=JSON.parse(require('fs').readFileSync(process.argv[1],'utf8'));if(!c.chatStimulusEnabled||!c.arousalEnabled||!c.arousalDriveSettlementEnabled||c.soloSessionsEnabled)process.exit(1)" \
-  "$DESIRE_ROOT/config/default.json"
+node "$DESIRE_ROOT/scripts/preserve-feature-flags.mjs" restore \
+  "$DESIRE_ROOT/config/default.json" "$BACKUP/feature-flags.json"
+node "$DESIRE_ROOT/scripts/preserve-feature-flags.mjs" verify \
+  "$DESIRE_ROOT/config/default.json" "$BACKUP/feature-flags.json"
+node "$SOURCE_ROOT/scripts/verify-runtime-release.mjs" verify \
+  "$SOURCE_ROOT" "$DESIRE_ROOT" >/dev/null
+node "$DESIRE_ROOT/scripts/runtime-release-manifest.mjs" verify \
+  "$DESIRE_ROOT" "$DESIRE_ROOT/$RUNTIME_MANIFEST" >/dev/null
+node "$SOURCE_ROOT/scripts/formal-release-layout.mjs" verify \
+  "$CURRENT_LINK" "$DESIRE_ROOT" "$DESIRE_ROOT/$DEPLOYMENT_METADATA" >/dev/null
 systemctl restart aru-desire-turn-receiver.service
 systemctl restart aru-desire-dashboard.service
 systemctl is-active --quiet aru-desire-turn-receiver.service
 systemctl is-active --quiet aru-desire-dashboard.service
-readonly ACTIVATION_ID="activation-${STAMP}"
+ACTIVATION_NONCE=$(node -e "process.stdout.write(require('node:crypto').randomBytes(8).toString('hex'))")
+readonly ACTIVATION_ID="activation-${STAMP}-${ACTIVATION_NONCE}"
+unset ACTIVATION_NONCE
+INSTALL_STAGE=synthetic_preflight
+runuser -u aru-desire -- node "$DESIRE_ROOT/scripts/verify-synthetic-ledger.mjs" \
+  absent "$DESIRE_ROOT/config/default.json" "$DESIRE_DATA" "$ACTIVATION_ID"
 INSTALL_STAGE=synthetic_end_to_end
 runuser -u aru-selfhost -- env \
   ARU_DESIRE_TURN_HOOK_ENABLED=true \
   ARU_DESIRE_TURN_HOOK_ENDPOINT=http://127.0.0.1:18761/v1/complete-message \
   ARU_DESIRE_TURN_HOOK_SECRET_FILE="$ARU_SECRET" \
-  ARU_DESIRE_TURN_HOOK_TIMEOUT_MS=1000 \
+  ARU_DESIRE_TURN_HOOK_TIMEOUT_MS=2000 \
   node "$NEW_RELEASE/synthetic-check.mjs" "$ACTIVATION_ID"
+INSTALL_STAGE=synthetic_postflight
 runuser -u aru-desire -- node "$DESIRE_ROOT/scripts/verify-synthetic-ledger.mjs" \
-  "$DESIRE_ROOT/config/default.json" "$DESIRE_DATA" "$ACTIVATION_ID"
+  applied-once "$DESIRE_ROOT/config/default.json" "$DESIRE_DATA" "$ACTIVATION_ID"
+INSTALL_STAGE=restore_service_states
+if [[ $RECEIVER_WAS_ENABLED == enabled ]]; then
+  systemctl enable aru-desire-turn-receiver.service >/dev/null
+else
+  systemctl disable aru-desire-turn-receiver.service >/dev/null
+fi
+[[ $RECEIVER_WAS_ACTIVE == active ]] || systemctl stop aru-desire-turn-receiver.service
+[[ $DASHBOARD_WAS_ACTIVE == active ]] || systemctl stop aru-desire-dashboard.service
+[[ $ARU_WAS_ACTIVE == active ]] || systemctl stop aru-selfhost.service
+[[ $(systemctl is-active aru-selfhost.service || true) == "$ARU_WAS_ACTIVE" ]]
+[[ $(systemctl is-active aru-desire-turn-receiver.service || true) == "$RECEIVER_WAS_ACTIVE" ]]
+[[ $(systemctl is-active aru-desire-dashboard.service || true) == "$DASHBOARD_WAS_ACTIVE" ]]
+[[ $(systemctl is-enabled aru-desire-turn-receiver.service 2>/dev/null || true) == \
+  "$RECEIVER_WAS_ENABLED" ]]
+INSTALL_STAGE=restore_heartbeat_timer
+if [[ $HEARTBEAT_TIMER_WAS_ACTIVE == active ]]; then
+  systemctl start "$HEARTBEAT_TIMER"
+else
+  systemctl stop "$HEARTBEAT_TIMER"
+fi
+[[ $(systemctl is-active "$HEARTBEAT_TIMER" || true) == "$HEARTBEAT_TIMER_WAS_ACTIVE" ]]
+[[ $(systemctl is-enabled "$HEARTBEAT_TIMER" 2>/dev/null || true) == \
+  "$HEARTBEAT_TIMER_WAS_ENABLED" ]]
 trap - ERR
 printf 'installed complete-message hook; rollback backup: %s\n' "$BACKUP"

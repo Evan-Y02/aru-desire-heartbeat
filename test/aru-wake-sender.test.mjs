@@ -91,6 +91,7 @@ test('submission uses only the credential URL and bearer token', async () => {
 test('native HTTPS sender runs under --jitless without Undici or WebAssembly', () => {
   const moduleUrl = new URL('../delivery/aru-wake-sender.mjs', import.meta.url).href;
   const source = `
+    import { writeSync } from 'node:fs';
     import { submitAruExternalTrigger } from ${JSON.stringify(moduleUrl)};
     const credential = ${JSON.stringify({ ...BUNDLE, submitURL: 'https://127.0.0.1:1/events' })};
     const event = { schema: 'xinchao.desire-external-event.v1', eventId: 'jitless-test' };
@@ -98,7 +99,7 @@ test('native HTTPS sender runs under --jitless without Undici or WebAssembly', (
       await submitAruExternalTrigger({ credential, event, timeoutMs: 250 });
       process.exit(2);
     } catch (error) {
-      process.stdout.write(String(error.code));
+      writeSync(1, String(error.code));
     }
   `;
   const child = spawnSync(process.execPath, ['--jitless', '--input-type=module', '-e', source], {

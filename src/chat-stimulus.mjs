@@ -1,35 +1,110 @@
 import { createHash } from 'node:crypto';
 import { DRIVES } from './constants.mjs';
-import { clamp, timePair } from './engine.mjs';
+import {
+  addNegativeCause,
+  clamp,
+  decayNegativeCauses,
+  NEGATIVE_CAUSE_DRIVES,
+  NEGATIVE_CAUSE_KINDS,
+  recoverNegativeCause,
+  timePair,
+} from './engine.mjs';
 import { ValidationError } from './schema.mjs';
 
 export const CHAT_STATE_SCHEMA = 'aru.desire-heartbeat.chat-stimulus-state.v1';
 const EVENT_TYPES = new Set([
   'intimacy_longing', 'sexual_explicit', 'hurt_anger',
-  'needs_support', 'affirmation',
+  'conflict', 'task_pressure', 'fatigue_burden', 'other_stress',
+  'needs_support', 'affirmation', 'comfort', 'reassurance',
+  'resolution', 'conflict_resolved', 'task_completed', 'rest_recovery',
 ]);
 const ZERO_DRIVES = Object.freeze(Object.fromEntries(DRIVES.map((drive) => [drive, 0])));
 const TYPE_DELTAS = Object.freeze({
   intimacy_longing: { attachment: 0.055, social: 0.035 },
   sexual_explicit: { attachment: 0.015, libido: 0.080 },
   hurt_anger: { reflection: 0.070, duty: 0.070, stress: 0.060 },
+  conflict: { reflection: 0.055, duty: 0.045, stress: 0.070 },
+  task_pressure: { reflection: 0.025, duty: 0.070, stress: 0.060 },
+  fatigue_burden: { duty: 0.025, fatigue: 0.080, stress: 0.030 },
+  other_stress: { stress: 0.050 },
   needs_support: { attachment: 0.050, duty: 0.055 },
-  affirmation: { attachment: 0.050, stress: -0.035 },
+  affirmation: { attachment: 0.050 },
+  comfort: { attachment: 0.030 },
+  reassurance: { attachment: 0.025 },
+  resolution: {},
+  conflict_resolved: {},
+  task_completed: {},
+  rest_recovery: {},
 });
 
 const PATTERNS = Object.freeze({
   intimacy_longing: /(?:想你|想念|爱你|依恋|陪着你|靠近你|miss you|love you|close to you)/iu,
   sexual_explicit: /(?:亲吻|吻住|抚摸|摸着|摩擦|抽动|进入|高潮|射精|kiss(?:ing)?|strok(?:e|ing)|rubb(?:ing)?|thrust(?:ing)?|climax)/iu,
   hurt_anger: /(?:失望|生气|伤害了我|被伤害|委屈|辜负|angry|disappointed|hurt me)/iu,
+  conflict: /(?:冲突|争吵|吵架|闹矛盾|conflict|argu(?:e|ed|ment)|fought|fight)/iu,
+  task_pressure: /(?:任务压力|工作压力|截止时间|没完成|责任很重|task pressure|deadline|workload|unfinished task)/iu,
+  fatigue_burden: /(?:疲惫|累坏了|精疲力尽|负担太重|筋疲力尽|exhausted|burned out|overloaded|heavy burden)/iu,
+  other_stress: /(?:压力很大|焦虑|紧张|担心|stressed|anxious|under pressure)/iu,
   needs_support: /(?:疲惫|累坏了|难过|不舒服|身体疼|需要陪伴|陪陪我|exhausted|sad|feel sick|stay with me)/iu,
   affirmation: /(?:做得很好|真棒|谢谢你陪我|我相信你|我们一直在一起|你很重要|proud of you|trust you|we are together)/iu,
+  comfort: /(?:安慰你|抱抱你|陪着你|理解你的感受|comfort you|here with you|understand how you feel)/iu,
+  reassurance: /(?:没关系|不是你的错|不用自责|别担心|会没事的|reassure you|not your fault|it will be okay)/iu,
+  conflict_resolved: /(?:冲突已经解决|已经和好|我们说开了|矛盾解决了|conflict resolved|made up|reconciled)/iu,
+  task_completed: /(?:任务完成了|工作做完了|已经交付|task completed|task is done|finished the task)/iu,
+  rest_recovery: /(?:休息好了|睡了一觉|恢复过来|负担卸下了|rested|recovered|took a break|burden lifted)/iu,
+  resolution: /(?:问题解决了|已经处理好了|事情解决了|problem solved|issue resolved|resolved the issue)/iu,
 });
+const NEGATIVE_KIND_PRECEDENCE = Object.freeze([
+  ['relationship_conflict', ['conflict', 'hurt_anger']],
+  ['task_pressure', ['task_pressure']],
+  ['fatigue_burden', ['fatigue_burden']],
+  ['other_stress', ['other_stress']],
+]);
+const NEGATIVE_EVENT_TYPES = new Set(NEGATIVE_KIND_PRECEDENCE.flatMap(([, types]) => types));
+// An explicit or parent-derived ID may target one compatible cause. Without a link,
+// only the newest compatible open cause receives the conservative fallback fraction;
+// unlinked recovery never closes a cause or sweeps across multiple causes.
+const RECOVERY_PRECEDENCE = Object.freeze([
+  ['conflict_resolved', {
+    linkedKinds: ['relationship_conflict'], fallbackKinds: ['relationship_conflict'],
+    linkedFraction: 1, fallbackFraction: 0.60, closeLinked: true,
+  }],
+  ['task_completed', {
+    linkedKinds: ['task_pressure'], fallbackKinds: ['task_pressure'],
+    linkedFraction: 1, fallbackFraction: 0.60, closeLinked: true,
+  }],
+  ['rest_recovery', {
+    linkedKinds: ['fatigue_burden'], fallbackKinds: ['fatigue_burden'],
+    linkedFraction: 0.65, fallbackFraction: 0.50, closeLinked: false,
+  }],
+  ['resolution', {
+    linkedKinds: NEGATIVE_CAUSE_KINDS, fallbackKinds: [
+      'relationship_conflict', 'task_pressure', 'other_stress',
+    ],
+    linkedFraction: 1, fallbackFraction: 0.50, closeLinked: true,
+  }],
+  ['reassurance', {
+    linkedKinds: NEGATIVE_CAUSE_KINDS,
+    fallbackKinds: ['relationship_conflict', 'other_stress'],
+    linkedFraction: 0.35, fallbackFraction: 0.20, closeLinked: false,
+  }],
+  ['comfort', {
+    linkedKinds: NEGATIVE_CAUSE_KINDS,
+    fallbackKinds: ['relationship_conflict', 'other_stress'],
+    linkedFraction: 0.30, fallbackFraction: 0.20, closeLinked: false,
+  }],
+  ['affirmation', {
+    linkedKinds: NEGATIVE_CAUSE_KINDS,
+    fallbackKinds: ['relationship_conflict'],
+    linkedFraction: 0.20, fallbackFraction: 0.15, closeLinked: false,
+  }],
+]);
 const AMBIGUOUS = /(?:有点难受|说不清|怪怪的|不知道怎么说|mixed feelings|not sure how I feel)/iu;
 const QUESTION = /(?:[?？]|吗(?:[。！!]?$)|是不是|能不能|可不可以|如何|怎么(?:办|做)|what if|how do|could you)/iu;
 const NEGATED_OR_STOP = /(?:不想(?:要)?|没有在|没在|并非|不是在|别再|不要|停止|停下|stop|do not|don't|didn't|not doing)/iu;
 const HYPOTHETICAL = /(?:如果|假如|假设|要是|计划|打算|以后|明天|将来|would|could have|planning to|someday|if )/iu;
 const MEMORY = /(?:以前|曾经|上次|那次|回忆|记得当时|昨天|过去|used to|remember when|last time)/iu;
-const THIRD_PERSON = /(?:他|她|他们|她们|别人|某人|he |she |they |someone else)/iu;
+const THIRD_PERSON = /(?:他|她|他们|她们|别人|某人|\bhe\b|\bshe\b|\bthey\b|someone else)/iu;
 const TUTORIAL = /(?:教程|示例|举例|代码|正则|关键词|步骤|说明文|tutorial|example|sample code|documentation)/iu;
 const PARTICIPANTS = /(?:我|你|我们|彼此|me|you|we|us|each other)/iu;
 
@@ -135,6 +210,15 @@ export function validateCompleteMessageEvent(event) {
   if (event.content.length > 20_000) {
     throw new ValidationError('message event content is too large', 'MESSAGE_EVENT_INVALID');
   }
+  if (event.causeId !== undefined && event.causeId !== null &&
+      (typeof event.causeId !== 'string' || !/^event-[a-f0-9]{64}$/u.test(event.causeId))) {
+    throw new ValidationError('message event causeId is invalid', 'MESSAGE_EVENT_INVALID');
+  }
+  if (event.parentMessageId !== undefined && event.parentMessageId !== null &&
+      (typeof event.parentMessageId !== 'string' || event.parentMessageId.length === 0 ||
+        event.parentMessageId.length > 200)) {
+    throw new ValidationError('message event parentMessageId is invalid', 'MESSAGE_EVENT_INVALID');
+  }
   return event;
 }
 
@@ -143,6 +227,24 @@ export function stableMessageEventId(event) {
   return `event-${digest([
     event.source, event.conversationId, event.providerMessageId, event.role,
   ].join('\u0000'))}`;
+}
+
+function linkedCauseId(event) {
+  if (typeof event.causeId === 'string') return event.causeId;
+  if (typeof event.parentMessageId !== 'string') return null;
+  const parentRole = event.role === 'assistant' ? 'user' : 'assistant';
+  return `event-${digest([
+    event.source, event.conversationId, event.parentMessageId, parentRole,
+  ].join('\u0000'))}`;
+}
+
+function negativeCauseKind(types) {
+  return NEGATIVE_KIND_PRECEDENCE.find(([, matches]) =>
+    matches.some((type) => types.includes(type)))?.[0] ?? null;
+}
+
+function recoveryPlan(types) {
+  return RECOVERY_PRECEDENCE.find(([type]) => types.includes(type))?.[1] ?? null;
 }
 
 function stripNonAssertions(content) {
@@ -209,11 +311,14 @@ export function interpretCompleteMessage(event) {
     return {
       eventId, role: event.role, types: [], labels: [blocker],
       deltas: {}, stimuli: [], ambiguous: false,
+      linkedCauseId: linkedCauseId(event), negativeCauseKind: null, recoveryPlan: null,
     };
   }
   const types = [...EVENT_TYPES].filter((type) => PATTERNS[type].test(text));
+  const recovery = recoveryPlan(types);
   const deltas = {};
   for (const type of types) {
+    if (recovery !== null && NEGATIVE_EVENT_TYPES.has(type)) continue;
     for (const [drive, amount] of Object.entries(TYPE_DELTAS[type])) {
       deltas[drive] = (deltas[drive] ?? 0) + amount;
     }
@@ -223,6 +328,9 @@ export function interpretCompleteMessage(event) {
   return {
     eventId, role: event.role, types, labels, deltas,
     stimuli: stimulusForText(text, event.role), ambiguous,
+    linkedCauseId: linkedCauseId(event),
+    negativeCauseKind: recovery === null ? negativeCauseKind(types) : null,
+    recoveryPlan: recovery,
   };
 }
 
@@ -249,6 +357,7 @@ export function advanceChatStimulus(desireInput, chatInput, rootConfig, nowMs) {
   ));
   requireEpoch(nowMs, chatState.updatedAt.epochMs);
   decayInfluence(chatState, desireState, rootConfig.chatStimulus, nowMs);
+  decayNegativeCauses(desireState, rootConfig, nowMs);
   chatState.updatedAt = timePair(nowMs);
   return { desireState, chatState };
 }
@@ -302,27 +411,58 @@ export function applyChatStimulus(desireInput, chatInput, rootConfig, interprete
   const chatState = structuredClone(validateChatStimulusState(
     chatInput, rootConfig.chatStimulus,
   ));
-  requireEpoch(nowMs, chatState.updatedAt.epochMs);
   if (chatState.processedEvents.some((record) => record.eventId === interpreted.eventId)) {
     return { desireState, chatState, applied: false };
   }
   if (desireState.appliedChatEventIds?.includes(interpreted.eventId)) {
+    const reconciledAtMs = Math.max(nowMs, chatState.updatedAt.epochMs);
     chatState.processedEvents = [...chatState.processedEvents, {
       eventId: interpreted.eventId,
       types: interpreted.types,
       deltas: {},
-      at: timePair(nowMs),
+      at: timePair(reconciledAtMs),
       labels: ['replay_reconciled'],
     }].slice(-rootConfig.chatStimulus.ledgerMaxCount);
-    chatState.updatedAt = timePair(nowMs);
+    chatState.updatedAt = timePair(reconciledAtMs);
     return { desireState, chatState, applied: false };
   }
+  requireEpoch(nowMs, chatState.updatedAt.epochMs);
   decayInfluence(chatState, desireState, rootConfig.chatStimulus, nowMs);
+  decayNegativeCauses(desireState, rootConfig, nowMs);
   const deltas = boundedDeltas(interpreted, chatState, rootConfig.chatStimulus, nowMs);
+  const causeContributions = {};
+  if (interpreted.negativeCauseKind !== null) {
+    for (const drive of NEGATIVE_CAUSE_DRIVES) {
+      if ((deltas[drive] ?? 0) > 0) causeContributions[drive] = deltas[drive];
+    }
+  }
   for (const [drive, delta] of Object.entries(deltas)) {
     const previous = desireState.drives[drive];
     desireState.drives[drive] = clamp(previous + delta);
-    chatState.influence[drive] += desireState.drives[drive] - previous;
+    const applied = desireState.drives[drive] - previous;
+    if (!Object.hasOwn(causeContributions, drive)) chatState.influence[drive] += applied;
+    else causeContributions[drive] = applied;
+  }
+  if (interpreted.negativeCauseKind !== null) {
+    addNegativeCause(desireState, rootConfig, {
+      causeId: interpreted.eventId,
+      kind: interpreted.negativeCauseKind,
+      contributions: causeContributions,
+      nowMs,
+    });
+  } else if (interpreted.recoveryPlan !== null) {
+    const linked = interpreted.linkedCauseId !== null;
+    const plan = interpreted.recoveryPlan;
+    const recovery = recoverNegativeCause(desireState, {
+      causeId: interpreted.linkedCauseId,
+      kinds: linked ? plan.linkedKinds : plan.fallbackKinds,
+      fraction: linked ? plan.linkedFraction : plan.fallbackFraction,
+      close: linked && plan.closeLinked,
+      nowMs,
+    });
+    for (const [drive, delta] of Object.entries(recovery.deltas)) {
+      deltas[drive] = (deltas[drive] ?? 0) + delta;
+    }
   }
   if (interpreted.types.includes('hurt_anger')) {
     addEventFlit(desireState, rootConfig, interpreted.eventId, nowMs);

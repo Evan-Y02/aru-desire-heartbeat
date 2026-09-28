@@ -213,6 +213,15 @@ class DashboardTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "timeline reasons are invalid"):
             dashboard.timeline_view(entry)
 
+    def test_timeline_accepts_private_fingerprint_without_exposing_it(self):
+        entry = copy.deepcopy(fixture_state()["timeline"][0])
+        entry["decisionFingerprint"] = "a" * 64
+        entry["outcome"] = "pending_expired"
+        entry["reasons"] = ["pending-expired", "pending-cooldown"]
+        view = dashboard.timeline_view(entry)
+        self.assertEqual(view["outcomeLabel"], "等待意图已过期")
+        self.assertNotIn("decisionFingerprint", view)
+
     def test_autonomous_silence_and_local_psychology_are_visible(self):
         entry = copy.deepcopy(fixture_state()["timeline"][0])
         entry.update({

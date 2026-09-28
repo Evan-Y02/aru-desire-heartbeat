@@ -6,9 +6,22 @@ import {
   STATE_SCHEMA,
 } from './constants.mjs';
 import { assertUnit, validateState, ValidationError } from './schema.mjs';
+import { pendingDecisionFingerprint } from './pending-decision.mjs';
 
 export const clamp = (value) => Math.min(1, Math.max(0, value));
 export const timePair = (epochMs) => ({ iso: new Date(epochMs).toISOString(), epochMs });
+
+export const NEGATIVE_CAUSE_DRIVES = Object.freeze([
+  'reflection', 'duty', 'fatigue', 'stress',
+]);
+export const NEGATIVE_CAUSE_KINDS = Object.freeze([
+  'relationship_conflict', 'task_pressure', 'fatigue_burden', 'other_stress',
+]);
+const NEGATIVE_CAUSE_EPSILON = 0.000_001;
+
+const emptyNegativeContributions = () => Object.fromEntries(
+  NEGATIVE_CAUSE_DRIVES.map((drive) => [drive, 0]),
+);
 
 const AUTOMATIC_THOUGHT_TEXT = Object.freeze({
   attachment: '想靠近你',
@@ -48,6 +61,9 @@ export function createInitialState(config, epochMs = Date.now()) {
     thoughts: [],
     timeline: [],
     pendingDecision: null,
+    pendingCooldownUntil: null,
+    negativeCauseUpdatedAt: at,
+    negativeCauses: [],
     expression: {
       consecutiveWithholds: 0,
     },
@@ -58,6 +74,112 @@ export function createInitialState(config, epochMs = Date.now()) {
       lastLibidoChoice: null,
     },
   };
+}
+
+function remainingTotal(cause) {
+  return NEGATIVE_CAUSE_DRIVES.reduce((sum, drive) => sum + cause.remaining[drive], 0);
+}
+
+function subtractCauseContribution(state, amounts) {
+  for (const drive of NEGATIVE_CAUSE_DRIVES) {
+    state.drives[drive] = clamp(state.drives[drive] - (amounts[drive] ?? 0));
+  }
+}
+
+export function decayNegativeCauses(state, config, nowMs) {
+  const previousMs = state.negativeCauseUpdatedAt?.epochMs ?? state.lastTickAt.epochMs;
+  if (!Number.isSafeInteger(nowMs) || nowMs < previousMs) {
+    throw new ValidationError('negative cause clock moved backwards or is invalid', 'CLOCK_ANOMALY');
+  }
+  const elapsedSeconds = (nowMs - previousMs) / 1000;
+  if (elapsedSeconds === 0) return state;
+  const factor = Math.exp(-elapsedSeconds / config.chatStimulus.decayTauSeconds);
+  for (const cause of state.negativeCauses) {
+    if (cause.status !== 'open') continue;
+    const removed = emptyNegativeContributions();
+    for (const drive of NEGATIVE_CAUSE_DRIVES) {
+      const retained = cause.remaining[drive] * factor;
+      removed[drive] = cause.remaining[drive] - retained;
+      cause.remaining[drive] = retained;
+    }
+    subtractCauseContribution(state, removed);
+    cause.updatedAt = timePair(nowMs);
+    if (remainingTotal(cause) <= NEGATIVE_CAUSE_EPSILON) {
+      subtractCauseContribution(state, cause.remaining);
+      cause.remaining = emptyNegativeContributions();
+      cause.status = 'decayed';
+      cause.closedAt = timePair(nowMs);
+    }
+  }
+  state.negativeCauseUpdatedAt = timePair(nowMs);
+  return state;
+}
+
+export function addNegativeCause(state, config, {
+  causeId, kind, contributions, nowMs,
+}) {
+  if (!/^event-[a-f0-9]{64}$/u.test(causeId) || !NEGATIVE_CAUSE_KINDS.includes(kind)) {
+    throw new ValidationError('negative cause identity is invalid');
+  }
+  if (state.negativeCauses.some((cause) => cause.causeId === causeId)) return false;
+  const initial = emptyNegativeContributions();
+  for (const drive of NEGATIVE_CAUSE_DRIVES) initial[drive] = contributions[drive] ?? 0;
+  if (remainingTotal({ remaining: initial }) <= 0) return false;
+  if (state.negativeCauses.length >= config.chatStimulus.ledgerMaxCount) {
+    const removed = state.negativeCauses.shift();
+    if (removed.status === 'open') subtractCauseContribution(state, removed.remaining);
+  }
+  const at = timePair(nowMs);
+  state.negativeCauses.push({
+    causeId,
+    kind,
+    strength: Math.max(...Object.values(initial)),
+    status: 'open',
+    openedAt: at,
+    updatedAt: at,
+    closedAt: null,
+    initial,
+    remaining: structuredClone(initial),
+  });
+  return true;
+}
+
+export function recoverNegativeCause(state, {
+  causeId = null,
+  kinds,
+  fraction,
+  close = false,
+  nowMs,
+}) {
+  const compatible = (cause) => cause.status === 'open' && kinds.includes(cause.kind);
+  let cause = null;
+  if (causeId !== null) {
+    cause = state.negativeCauses.find((item) => item.causeId === causeId && compatible(item)) ?? null;
+  } else {
+    cause = [...state.negativeCauses].reverse().find(compatible) ?? null;
+  }
+  if (cause === null) return { causeId: null, deltas: {} };
+  const deltas = {};
+  for (const drive of NEGATIVE_CAUSE_DRIVES) {
+    const removed = cause.remaining[drive] * (close ? 1 : fraction);
+    if (removed <= 0) continue;
+    cause.remaining[drive] -= removed;
+    state.drives[drive] = clamp(state.drives[drive] - removed);
+    deltas[drive] = -removed;
+  }
+  cause.updatedAt = timePair(nowMs);
+  if (close || remainingTotal(cause) <= NEGATIVE_CAUSE_EPSILON) {
+    subtractCauseContribution(state, cause.remaining);
+    for (const drive of NEGATIVE_CAUSE_DRIVES) {
+      if (cause.remaining[drive] > 0) {
+        deltas[drive] = (deltas[drive] ?? 0) - cause.remaining[drive];
+      }
+    }
+    cause.remaining = emptyNegativeContributions();
+    cause.status = 'resolved';
+    cause.closedAt = timePair(nowMs);
+  }
+  return { causeId: cause.causeId, deltas };
 }
 
 function nextSequence(state) {
@@ -130,27 +252,56 @@ function routeCandidate(state, config, nowMs, candidate, { forceContact = false 
   return { ...candidate, intent: chooseLibidoIntent(state, config, nowMs).intent };
 }
 
-function moveToward(current, target, maximumChange) {
-  if (maximumChange <= 0 || current === target) return current;
-  if (current < target) return Math.min(target, current + maximumChange);
-  return Math.max(target, current - maximumChange);
-}
-
 function updateDrivesForElapsed(state, config, elapsedMs, nowMs) {
+  if (elapsedMs === 0) return;
   const hours = elapsedMs / 3_600_000;
   for (const drive of DRIVES) {
-    const factor = selfDriveFactor(
+    const growth = config.driveGrowthPerHour[drive] * selfDriveFactor(
       nowMs, config.heartbeatSeconds, drive, config.selfDriveVariation,
     );
-    const grown = clamp(
-      state.drives[drive] + config.driveGrowthPerHour[drive] * hours * factor,
+    const returnRate = config.driveReturnPerHour[drive];
+    const rate = growth + returnRate;
+    const equilibrium = (
+      growth + returnRate * config.driveHomeLevels[drive]
+    ) / rate;
+    state.drives[drive] = clamp(
+      equilibrium + (state.drives[drive] - equilibrium) * Math.exp(-rate * hours),
     );
-    state.drives[drive] = clamp(moveToward(
-      grown,
-      config.driveHomeLevels[drive],
-      config.driveReturnPerHour[drive] * hours,
-    ));
   }
+}
+
+function expireSuppressedPending(state, config, nowMs) {
+  const decision = state.pendingDecision;
+  if (decision?.expiresAt === null || decision?.expiresAt === undefined ||
+      nowMs < decision.expiresAt.epochMs) return null;
+  const logicalExpiryMs = decision.expiresAt.epochMs;
+  state.pendingDecision = null;
+  state.pendingCooldownUntil = timePair(
+    logicalExpiryMs + config.pendingDecisionCooldownSeconds * 1000,
+  );
+  state.lastDecisionAt = timePair(nowMs);
+  nextSequence(state);
+  return decision;
+}
+
+export function armPendingDecisionWait(state, config, nowMs, blocker) {
+  const decision = state.pendingDecision;
+  if (decision === null) return null;
+  if (decision.expiresAt === null) {
+    decision.expiresAt = timePair(nowMs + config.pendingDecisionTtlSeconds * 1000);
+  }
+  decision.deliverySuppressed = true;
+  if (!decision.deliveryBlockers.includes(blocker)) decision.deliveryBlockers.push(blocker);
+  return decision;
+}
+
+export function disarmPendingDecisionWait(state) {
+  const decision = state.pendingDecision;
+  if (decision === null) return null;
+  decision.expiresAt = null;
+  decision.deliverySuppressed = false;
+  decision.deliveryBlockers = [];
+  return decision;
 }
 
 export function synchronizeThoughts(state, config, nowMs) {
@@ -228,6 +379,7 @@ export function sentinel(state, config, nowMs, candidate, { clockValid = true } 
   if (state.pendingDecision !== null) formationBlockers.push('pending-decision');
   if (state.drives.fatigue >= config.fatigueGate) formationBlockers.push('fatigue-gate');
   if (candidate === null || candidate.score < config.triggerThreshold) formationBlockers.push('below-trigger-threshold');
+  if (state.pendingCooldownUntil?.epochMs > nowMs) formationBlockers.push('pending-cooldown');
 
   const deliveryBlockers = [];
   if (config.observeOnly) deliveryBlockers.push('observe-only');
@@ -302,7 +454,13 @@ export function formDecision(state, config, nowMs, { clockValid = true } = {}) {
     deliverySuppressed: isSolo ? config.observeOnly : !guard.canDeliver,
     delivered: false,
     deliveryBlockers,
+    expiresAt: null,
+    fingerprint: '',
   };
+  decision.fingerprint = pendingDecisionFingerprint(decision);
+  if (decision.deliverySuppressed) {
+    decision.expiresAt = timePair(nowMs + config.pendingDecisionTtlSeconds * 1000);
+  }
   state.pendingDecision = decision;
   state.lastDecisionAt = timePair(nowMs);
   return {
@@ -330,13 +488,16 @@ export function tickState(input, config, nowMs = Date.now()) {
   if (elapsedMs > config.maxElapsedSeconds * 1000) {
     throw new ValidationError('elapsed time exceeds configured safety limit', 'CLOCK_ANOMALY');
   }
+  const expiredDecision = expireSuppressedPending(state, config, nowMs);
+  if (state.pendingCooldownUntil?.epochMs <= nowMs) state.pendingCooldownUntil = null;
+  decayNegativeCauses(state, config, nowMs);
   updateDrivesForElapsed(state, config, elapsedMs, nowMs);
   synchronizeThoughts(state, config, nowMs);
   const result = formDecision(state, config, nowMs);
   state.lastTickAt = timePair(nowMs);
   state.updatedAt = timePair(nowMs);
   validateState(state, config);
-  return { state, elapsedSeconds: elapsedMs / 1000, ...result };
+  return { state, elapsedSeconds: elapsedMs / 1000, expiredDecision, ...result };
 }
 
 export function decideState(input, config, nowMs = Date.now()) {

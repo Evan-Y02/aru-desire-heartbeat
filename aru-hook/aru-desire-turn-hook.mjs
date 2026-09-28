@@ -117,6 +117,12 @@ export function createAruDesireTurnHook({
     receiver_completed_count: 0,
     receiver_applied_count: 0,
     receiver_duplicate_count: 0,
+    request_attempt_count: 0,
+    retry_count: 0,
+    initial_timeout_count: 0,
+    initial_unavailable_count: 0,
+    initial_receiver_error_count: 0,
+    recovered_after_retry_count: 0,
     rejected_count: 0,
     timeout_count: 0,
     last_success_at: null,
@@ -141,9 +147,16 @@ export function createAruDesireTurnHook({
       counters.duplicate_count += 1;
       return;
     }
+    counters.request_attempt_count += 1;
     let result = await sendOnce({ endpoint, secret, timeoutMs }, event);
     if (!result.ok && result.retryable) {
+      counters.retry_count += 1;
+      if (result.category === 'timeout') counters.initial_timeout_count += 1;
+      else if (result.category === 'unavailable') counters.initial_unavailable_count += 1;
+      else if (result.category === 'receiver_error') counters.initial_receiver_error_count += 1;
+      counters.request_attempt_count += 1;
       result = await sendOnce({ endpoint, secret, timeoutMs }, event);
+      if (result.ok) counters.recovered_after_retry_count += 1;
     }
     if (result.ok) {
       delivered.add(event.event_id);

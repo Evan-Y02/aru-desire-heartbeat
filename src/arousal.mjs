@@ -171,10 +171,10 @@ export function applyArousalEvent(input, config, event, libidoSensitivity = 0, n
     throw new ValidationError('arousal event id is invalid', 'AROUSAL_EVENT_INVALID');
   }
   requireUnit(libidoSensitivity, 'libido sensitivity');
-  requireTime(nowMs, state.updatedAt.epochMs);
   if (state.processedEvents.includes(eventId)) {
     return { state, applied: false, released: false, receipt: state.pendingReleaseReceipt };
   }
+  requireTime(nowMs, state.updatedAt.epochMs);
   advanceBody(state, config, nowMs);
   const stimuli = normalizeStimuli(event.stimuli);
   const refractory = state.refractoryUntil !== null && nowMs < state.refractoryUntil.epochMs;

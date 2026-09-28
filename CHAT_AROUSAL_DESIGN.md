@@ -28,6 +28,10 @@ persistent record.
 - `src/chat-stimulus.mjs` performs deterministic context filtering, event
   classification, bounded drive changes, decay, replay protection, qualitative
   flits, and a bounded ambiguous-event queue.
+- Negative effects are represented in the existing desire state as bounded,
+  text-free cause records containing only a stable event-derived ID, kind,
+  timestamps, initial and remaining contribution, and status. Heartbeats decay
+  open contributions; resolved contributions remain zero and are never reapplied.
 - `src/arousal.mjs` owns the independent physical state, stimulus mechanics,
   release gate, reserve, refractory interval, receipt creation, and the strict
   nine-field public projection.
@@ -39,13 +43,22 @@ The existing `data/state.json` remains the Desire-Heartbeat state. Optional
 the corresponding enabled feature actually applies an event. They make a replay
 safe if the desire state was saved before the separate interaction state.
 
+Recovery targets one compatible cause. Explicit IDs and stable parent-message
+links take priority. Without a link, reassurance/comfort may reduce only the
+newest relationship or other-stress cause, affirmation only the newest
+relationship cause, and resolution/task/rest only the newest cause of the
+matching kind. Unlinked recovery is fractional and cannot close a cause.
+Recovery never changes pending decisions, satisfaction timestamps, cooldowns,
+delivery gates, or timeline outcomes.
+
 ## Migration and activation
 
 Existing version-2 configuration files are normalized in memory with all four
-new gates disabled. Existing desire state needs no rewrite. Interaction state is
-created explicitly only when a supported inbound hook is available and the
-feature is intentionally activated; initialization refuses to overwrite an
-existing file.
+new gates disabled. Existing desire state is normalized in memory with an empty
+cause ledger and a decay clock copied from its last heartbeat when those fields
+are absent. Interaction state is created explicitly only when a supported inbound
+hook is available and the feature is intentionally activated; initialization
+refuses to overwrite an existing file.
 
 The committed defaults are:
 

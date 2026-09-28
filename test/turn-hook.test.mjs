@@ -108,6 +108,8 @@ test('hook sends complete events, suppresses replay, and exposes text-free diagn
   assert.equal(hook.diagnostics().receiver_completed_count, 2);
   assert.equal(hook.diagnostics().receiver_applied_count, 2);
   assert.equal(hook.diagnostics().receiver_duplicate_count, 0);
+  assert.equal(hook.diagnostics().request_attempt_count, 2);
+  assert.equal(hook.diagnostics().retry_count, 0);
   assert.doesNotMatch(JSON.stringify(hook.diagnostics()), /Synthetic complete/u);
 });
 
@@ -140,8 +142,55 @@ test('a fresh hook replay exposes receiver-side duplicate completion', async () 
   assert.equal(first.diagnostics().receiver_applied_count, 2);
   assert.equal(replay.diagnostics().receiver_completed_count, 2);
   assert.equal(replay.diagnostics().receiver_duplicate_count, 2);
+  assert.equal(replay.diagnostics().request_attempt_count, 2);
+  assert.equal(replay.diagnostics().retry_count, 0);
   assert.equal(replay.diagnostics().timeout_count, 0);
   assert.equal(replay.diagnostics().rejected_count, 0);
+});
+
+test('retry after receiver commit is diagnosed separately from a clean activation', async () => {
+  const seen = new Set();
+  const processed = new Map();
+  const server = createServer((request, response) => {
+    const chunks = [];
+    request.on('data', (chunk) => chunks.push(chunk));
+    request.on('end', () => {
+      const event = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      if (!seen.has(event.event_id)) {
+        seen.add(event.event_id);
+        processed.set(event.event_id, (processed.get(event.event_id) ?? 0) + 1);
+        setTimeout(() => {
+          if (!response.destroyed) {
+            response.writeHead(200, { 'content-type': 'application/json' })
+              .end('{"status":"applied"}\n');
+          }
+        }, 120);
+        return;
+      }
+      response.writeHead(200, { 'content-type': 'application/json' })
+        .end('{"status":"duplicate"}\n');
+    });
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  const hook = createAruDesireTurnHook({
+    enabled: true,
+    endpoint: `http://127.0.0.1:${address.port}/v1/complete-message`,
+    secretFile: await secretFile(),
+    timeoutMs: 50,
+  });
+  await hook.deliver(settled());
+  server.closeAllConnections();
+  server.close();
+  const diagnostics = hook.diagnostics();
+  assert.equal(seen.size, 2);
+  assert.deepEqual([...processed.values()], [1, 1]);
+  assert.equal(diagnostics.receiver_duplicate_count, 2);
+  assert.equal(diagnostics.request_attempt_count, 4);
+  assert.equal(diagnostics.retry_count, 2);
+  assert.equal(diagnostics.initial_timeout_count, 2);
+  assert.equal(diagnostics.recovered_after_retry_count, 2);
+  assert.equal(diagnostics.timeout_count, 0);
 });
 
 test('receiver outage and timeout resolve fail-open without changing existing callback result', async () => {

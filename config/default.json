@@ -23,6 +23,8 @@
   "clockSkewToleranceSeconds": 5,
   "maxElapsedSeconds": 604800,
   "selfDriveVariation": 0.35,
+  "pendingDecisionTtlSeconds": 1800,
+  "pendingDecisionCooldownSeconds": 3600,
   "solo": {
     "enabled": true,
     "cooldownSeconds": 10800,
@@ -50,7 +52,7 @@
       "reflection": 0.08,
       "duty": 0.08,
       "social": 0.06,
-      "fatigue": 0.00,
+      "fatigue": 0.10,
       "libido": 0.10,
       "stress": 0.08
     },
@@ -60,7 +62,7 @@
       "reflection": 0.20,
       "duty": 0.20,
       "social": 0.16,
-      "fatigue": 0.00,
+      "fatigue": 0.25,
       "libido": 0.24,
       "stress": 0.20
     }
@@ -110,24 +112,24 @@
     "stress": 0.000
   },
   "driveHomeLevels": {
-    "attachment": 0.000,
-    "curiosity": 0.000,
-    "reflection": 0.000,
-    "duty": 0.000,
-    "social": 0.000,
-    "fatigue": 0.000,
-    "libido": 0.000,
-    "stress": 0.000
+    "attachment": 0.250,
+    "curiosity": 0.250,
+    "reflection": 0.250,
+    "duty": 0.200,
+    "social": 0.250,
+    "fatigue": 0.180,
+    "libido": 0.200,
+    "stress": 0.150
   },
   "driveReturnPerHour": {
-    "attachment": 0.000,
-    "curiosity": 0.000,
-    "reflection": 0.015,
-    "duty": 0.012,
-    "social": 0.000,
-    "fatigue": 0.010,
-    "libido": 0.000,
-    "stress": 0.025
+    "attachment": 0.120,
+    "curiosity": 0.160,
+    "reflection": 0.080,
+    "duty": 0.070,
+    "social": 0.160,
+    "fatigue": 0.060,
+    "libido": 0.130,
+    "stress": 0.090
   },
   "satisfactionDrops": {
     "attachment": 0.45,

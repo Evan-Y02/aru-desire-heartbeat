@@ -43,6 +43,7 @@ TIMELINE_OUTCOME_LABELS = {
     "submitted": "来找你了", "held_claimed": "已避免重复发送",
     "delivery_failed": "发送未确认", "solo_completed": "自己处理了",
     "solo_selected": "已选择 Solo，等待完整过程",
+    "pending_expired": "等待意图已过期",
 }
 TIMELINE_REASON_LABELS = {
     "clock-anomaly": "时钟异常", "pending-decision": "已有待处理意图",
@@ -60,6 +61,8 @@ TIMELINE_REASON_LABELS = {
     "delivery-already-claimed": "已阻止重复发送", "delivery-failed": "发送结果未确认",
     "solo-completed": "Solo 已完成",
     "solo-session-selected": "Solo Session 已建立，尚未视为完成",
+    "pending-expired": "等待超过安全时限，未作结算",
+    "pending-cooldown": "等待冷却后重新评估",
 }
 SECURITY_HEADERS = {
     "Cache-Control": "no-store, max-age=0",
@@ -255,7 +258,9 @@ def timeline_view(entry):
         "at", "nextCheckAt", "outcome", "drive", "intent",
         "score", "willingness", "reasons", "drives",
     }
-    if not isinstance(entry, dict) or set(entry) != expected_fields:
+    allowed_fields = expected_fields | {"decisionFingerprint"}
+    if (not isinstance(entry, dict) or not expected_fields.issubset(entry)
+            or not set(entry).issubset(allowed_fields)):
         raise ValueError("timeline entry is invalid")
     at = entry.get("at")
     next_check = entry.get("nextCheckAt")

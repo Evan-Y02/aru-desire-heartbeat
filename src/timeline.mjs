@@ -15,7 +15,7 @@ function uniqueReasons(reasons) {
 }
 
 function selectedState(tick) {
-  const pending = tick.state.pendingDecision;
+  const pending = tick.expiredDecision ?? tick.state.pendingDecision;
   const candidate = pending ?? tick.candidate;
   if (!candidate) return { drive: null, intent: null, score: null };
   return {
@@ -27,7 +27,10 @@ function selectedState(tick) {
 
 export function createTimelineEntry(tick, config, nowMs, outcome, extraReasons = []) {
   const selected = selectedState(tick);
-  const formation = tick.sentinel?.formationBlockers ?? [];
+  const decision = tick.expiredDecision ?? tick.state.pendingDecision;
+  const formation = (tick.sentinel?.formationBlockers ?? []).filter(
+    (reason) => reason !== 'pending-decision' || decision === null,
+  );
   const delivery = selected.intent === 'solo'
     ? (config.observeOnly ? ['observe-only'] : [])
     : (tick.sentinel?.deliveryBlockers ?? []);
@@ -41,7 +44,29 @@ export function createTimelineEntry(tick, config, nowMs, outcome, extraReasons =
     willingness: tick.expression?.willingness ?? null,
     reasons: uniqueReasons([...formation, ...delivery, ...extraReasons]),
     drives: Object.fromEntries(DRIVES.map((drive) => [drive, tick.state.drives[drive]])),
+    decisionFingerprint: decision?.fingerprint ?? null,
   };
+}
+
+function sameReasons(left, right) {
+  const blockers = new Set([
+    'observe-only',
+    'delivery-disabled',
+    'delivery-adapter-disabled',
+  ]);
+  const leftBlockers = left.filter((reason) => blockers.has(reason));
+  const rightBlockers = right.filter((reason) => blockers.has(reason));
+  return leftBlockers.length === rightBlockers.length &&
+    leftBlockers.every((reason) => rightBlockers.includes(reason));
+}
+
+export function timelineEntryChanged(state, entry) {
+  const latest = Array.isArray(state.timeline) ? state.timeline[0] : null;
+  if (entry.decisionFingerprint === null || latest?.decisionFingerprint === undefined ||
+      latest?.decisionFingerprint === null) return true;
+  return latest.decisionFingerprint !== entry.decisionFingerprint ||
+    latest.outcome !== entry.outcome ||
+    !sameReasons(latest.reasons, entry.reasons);
 }
 
 export function appendTimeline(state, entry) {

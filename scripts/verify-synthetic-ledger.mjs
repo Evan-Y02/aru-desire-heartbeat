@@ -4,9 +4,10 @@ import { canonicalEventId } from '../src/canonical-turn-event.mjs';
 import { loadInteractionState } from '../src/interaction-storage.mjs';
 import { loadConfig, loadState } from '../src/storage.mjs';
 
-const [configFile, dataDirectory, activationId] = process.argv.slice(2);
-if (!configFile || !dataDirectory || !/^activation-[0-9]{8}T[0-9]{6}Z$/u.test(activationId ?? '')) {
-  throw new Error('config, data directory, and activation id are required');
+const [mode, configFile, dataDirectory, activationId] = process.argv.slice(2);
+if (!['absent', 'applied-once'].includes(mode) || !configFile || !dataDirectory ||
+    !/^activation-[0-9]{8}T[0-9]{6}Z-[a-f0-9]{16}$/u.test(activationId ?? '')) {
+  throw new Error('mode, config, data directory, and unique activation id are required');
 }
 const config = await loadConfig(path.resolve(configFile));
 const desire = await loadState(path.resolve(dataDirectory), config);
@@ -18,9 +19,15 @@ const ids = ['user', 'assistant'].map((role) => canonicalEventId({
   role,
 }));
 for (const id of ids) {
-  if (desire.appliedChatEventIds?.filter((item) => item === id).length !== 1 ||
-      interaction.chat.processedEvents.filter((item) => item.eventId === id).length !== 1 ||
-      interaction.arousal.processedEvents.filter((item) => item === id).length !== 1) {
-    throw new Error('synthetic event was not applied exactly once');
+  const counts = [
+    desire.appliedChatEventIds?.filter((item) => item === id).length ?? 0,
+    interaction.chat.processedEvents.filter((item) => item.eventId === id).length,
+    interaction.arousal.processedEvents.filter((item) => item === id).length,
+  ];
+  const expected = mode === 'absent' ? 0 : 1;
+  if (counts.some((count) => count !== expected)) {
+    throw new Error(mode === 'absent'
+      ? 'unique synthetic event already exists before acceptance'
+      : 'synthetic event was not applied exactly once');
   }
 }

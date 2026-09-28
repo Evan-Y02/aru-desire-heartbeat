@@ -19,6 +19,27 @@ The optional Solo Session layer separates autonomous selection from preparation,
 structured action beats, edge, release/no-release completion, and downstream
 settlement. It is also disabled by default. See `SOLO_SESSION_DESIGN.md`.
 
+## 0.9.8
+
+Version 0.9.8 adds restart-safe pending expiry and cooldown, bounded negative
+cause tracking, linked comfort and resolution, task completion, rest recovery,
+and natural cause decay. Cause records contain only stable event identities,
+categories, timestamps, and numeric contributions; raw message text is never
+stored in the cause or interaction ledgers.
+
+The release also derives the complete runtime closure recursively and verifies
+byte-identical manifests beside the independent heartbeat runtime and inside the
+release selected by `current`. Production audits report those exact verified
+paths and bind `current` to deployment metadata before accepting a release.
+Installation acceptance uses nonce-qualified synthetic events, preserves all six
+feature flags, and rolls back the runtime, manifests, metadata, state, units,
+secrets, and service activity on failure.
+
+`package.json` is the single authoritative semantic version source. Runtime
+metadata and generated manifests derive their version from it. Timestamped Aru
+release directory names identify deployment instances only and are never treated
+as semantic versions.
+
 ## 0.9.7
 
 Version 0.9.7 adds bounded chat stimulus, independent Arousal state and
@@ -218,12 +239,14 @@ The default configuration cannot deliver.
 
 ## Drive dynamics
 
-All eight drives have a true zero lower bound and no hidden floor. Time alone
-raises only `attachment`, `curiosity`, `social`, and `libido`. `reflection`,
-`duty`, `fatigue`, and `stress` require an explicit feed or a matching thought;
-without one they settle toward zero. A successful expression lowers the selected
-drive proportionally rather than resetting it, retaining continuity and aftertone.
-The engine remains deterministic and makes no model or conversation call.
+All eight drives have a true zero lower bound and no hidden floor. They evolve
+toward bounded interior equilibria determined by configured growth, home levels,
+and return rates. Negative external events add separately tracked contributions
+to `reflection`, `duty`, `fatigue`, and `stress`; linked recovery or natural
+decay removes only those contributions. A successful expression lowers the
+selected drive proportionally rather than resetting it, retaining continuity and
+aftertone. The engine remains deterministic and makes no model or conversation
+call.
 
 On narrow screens the eight drive cards use a compact two-column, four-row grid
 so the timeline begins immediately after the complete snapshot.
@@ -243,6 +266,16 @@ Aru data, credentials, services, or conversations.
 this project build. The timer runs a oneshot service rather than a resident loop.
 The installer requires a pre-created low-privilege `aru-desire` account, installs
 atomically, retains attempt backups, and does not initialize state automatically.
+The complete-message-hook installer derives the recursive runtime closure, writes
+`/opt/aru-desire-heartbeat/release-manifest.json` with one size and SHA-256 entry
+per closure file, copies the identical manifest into the staged Aru release, and
+checks both copies against the exact file set and hashes before and after the
+`current` switch. Atomic deployment metadata records the expected release,
+previous release, rollback root, and installation boundary for later audits. A
+missing manifest, expected-release mismatch, omitted dependency, or mixed file
+aborts the install and invokes the exact rollback path.
+The semantic version in both manifests is always read from `package.json`; the
+timestamp in the staged Aru release directory is only a deployment identifier.
 The timer waits five minutes from activation before its first cycle and does not
 catch up missed runs. The oneshot runs Node with `--jitless` so the service can
 retain `MemoryDenyWriteExecute=yes`.
@@ -279,5 +312,27 @@ Any ambiguous retry failure remains closed for manual inspection.
 - the exact-content enable file is created only during confirmed activation;
 - the core runtime still contains no browsing, MCP, model, or Codex invocation;
 - the timer and delivery remain off after installation or upgrade.
+
+## Disabled-delivery pending lifecycle
+
+A decision blocked by observe-only or a disabled sender waits durably for at
+most 30 minutes. Its persisted SHA-256 fingerprint is derived only from the
+decision ID, drive, intent, and creation time; it contains no message content or
+credential material. Repeated heartbeats with the same fingerprint, outcome,
+and blockers do not append duplicate timeline entries, including after a
+restart. A changed blocker or lifecycle outcome is recorded once.
+
+When the wait expires, the decision is cleared without satisfaction, delivery,
+or any artificial drive reduction. Expiry is logically effective at the persisted
+30-minute deadline; the next scheduled heartbeat may observe and record it later.
+The 60-minute cooldown is anchored to that deadline rather than the observation
+time, so scheduler jitter cannot extend it. After it ends, the current drives are
+evaluated afresh. Decisions whose delivery was attempted remain fail-closed and
+do not use this expiry path.
+
+Drive evolution uses bounded exponential movement toward an internal
+equilibrium. Every drive has a positive return rate and a non-extreme home
+level, so long idle periods approach an interior value instead of mechanically
+pinning four drives to 100% and four to 0%.
 
 See `ARU_INTEGRATION.md` for the source-backed integration boundary.

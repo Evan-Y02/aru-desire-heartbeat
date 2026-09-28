@@ -8,6 +8,12 @@ import {
   TIMELINE_OUTCOMES,
   TIMELINE_REASONS,
 } from './constants.mjs';
+import { PENDING_FINGERPRINT_PATTERN } from './pending-decision.mjs';
+
+const NEGATIVE_CAUSE_DRIVES = Object.freeze(['reflection', 'duty', 'fatigue', 'stress']);
+const NEGATIVE_CAUSE_KINDS = new Set([
+  'relationship_conflict', 'task_pressure', 'fatigue_burden', 'other_stress',
+]);
 
 export class ValidationError extends Error {
   constructor(message, code = 'VALIDATION_ERROR') {
@@ -86,6 +92,12 @@ export function validateConfig(config) {
   assertInteger(config.clockSkewToleranceSeconds, 'config.clockSkewToleranceSeconds');
   assertInteger(config.maxElapsedSeconds, 'config.maxElapsedSeconds', 1);
   assertUnit(config.selfDriveVariation, 'config.selfDriveVariation');
+  assertInteger(config.pendingDecisionTtlSeconds, 'config.pendingDecisionTtlSeconds', 1);
+  assertInteger(
+    config.pendingDecisionCooldownSeconds,
+    'config.pendingDecisionCooldownSeconds',
+    1,
+  );
   assertPlainObject(config.solo, 'config.solo');
   if (typeof config.solo.enabled !== 'boolean') {
     throw new ValidationError('config.solo.enabled must be a boolean');
@@ -156,7 +168,11 @@ export function validateConfig(config) {
     }
   });
   assertDriveRecord(config.driveHomeLevels, 'config.driveHomeLevels', assertUnit);
-  assertDriveRecord(config.driveReturnPerHour, 'config.driveReturnPerHour', assertUnit);
+  assertDriveRecord(config.driveReturnPerHour, 'config.driveReturnPerHour', (value, label) => {
+    if (!Number.isFinite(value) || value <= 0 || value > 1) {
+      throw new ValidationError(`${label} must be greater than 0 and at most 1`);
+    }
+  });
   assertDriveRecord(config.satisfactionDrops, 'config.satisfactionDrops', assertUnit);
   return config;
 }
@@ -172,6 +188,10 @@ function validateDecision(decision) {
   }
   assertUnit(decision.score, 'pending decision score');
   assertTimePair(decision.createdAt, 'pending decision createdAt');
+  assertTimePair(decision.expiresAt, 'pending decision expiresAt', true);
+  if (!PENDING_FINGERPRINT_PATTERN.test(decision.fingerprint)) {
+    throw new ValidationError('pending decision fingerprint is invalid');
+  }
   if (decision.status !== 'pending' || typeof decision.deliverySuppressed !== 'boolean' || decision.delivered !== false) {
     throw new ValidationError('pending decision safety flags are invalid');
   }
@@ -196,8 +216,14 @@ function validateTimeline(timeline) {
       'at', 'drive', 'drives', 'intent', 'nextCheckAt',
       'outcome', 'reasons', 'score', 'willingness',
     ].sort();
-    if (keys.join(',') !== expectedKeys.join(',')) {
+    const allowedKeys = [...expectedKeys, 'decisionFingerprint'].sort();
+    if (expectedKeys.some((key) => !keys.includes(key)) ||
+        keys.some((key) => !allowedKeys.includes(key))) {
       throw new ValidationError('timeline entry contains unexpected fields');
+    }
+    if (entry.decisionFingerprint !== undefined && entry.decisionFingerprint !== null &&
+        !PENDING_FINGERPRINT_PATTERN.test(entry.decisionFingerprint)) {
+      throw new ValidationError('timeline decision fingerprint is invalid');
     }
     assertTimePair(entry.at, 'timeline entry at');
     assertTimePair(entry.nextCheckAt, 'timeline entry nextCheckAt');
@@ -246,6 +272,53 @@ function validateSolo(solo) {
   }
 }
 
+function validateNegativeCauses(state, config) {
+  assertTimePair(state.negativeCauseUpdatedAt, 'state.negativeCauseUpdatedAt');
+  if (!Array.isArray(state.negativeCauses) ||
+      state.negativeCauses.length > config.chatStimulus.ledgerMaxCount) {
+    throw new ValidationError('state.negativeCauses is invalid');
+  }
+  const ids = new Set();
+  for (const cause of state.negativeCauses) {
+    assertPlainObject(cause, 'negative cause');
+    const expected = [
+      'causeId', 'closedAt', 'initial', 'kind', 'openedAt',
+      'remaining', 'status', 'strength', 'updatedAt',
+    ].sort().join(',');
+    if (Object.keys(cause).sort().join(',') !== expected ||
+        typeof cause.causeId !== 'string' || !/^event-[a-f0-9]{64}$/u.test(cause.causeId) ||
+        ids.has(cause.causeId) || !NEGATIVE_CAUSE_KINDS.has(cause.kind) ||
+        !['open', 'resolved', 'decayed'].includes(cause.status)) {
+      throw new ValidationError('negative cause metadata is invalid');
+    }
+    ids.add(cause.causeId);
+    assertUnit(cause.strength, 'negative cause strength');
+    assertTimePair(cause.openedAt, 'negative cause openedAt');
+    assertTimePair(cause.updatedAt, 'negative cause updatedAt');
+    assertTimePair(cause.closedAt, 'negative cause closedAt', true);
+    for (const [label, record] of [['initial', cause.initial], ['remaining', cause.remaining]]) {
+      assertPlainObject(record, `negative cause ${label}`);
+      if (Object.keys(record).sort().join(',') !== [...NEGATIVE_CAUSE_DRIVES].sort().join(',')) {
+        throw new ValidationError(`negative cause ${label} dimensions are invalid`);
+      }
+      for (const drive of NEGATIVE_CAUSE_DRIVES) {
+        assertUnit(record[drive], `negative cause ${label}.${drive}`);
+        if (record[drive] > cause.initial[drive]) {
+          throw new ValidationError('negative cause remaining amount exceeds its initial amount');
+        }
+      }
+    }
+    const remaining = Object.values(cause.remaining).reduce((sum, value) => sum + value, 0);
+    if (cause.strength !== Math.max(...Object.values(cause.initial))) {
+      throw new ValidationError('negative cause strength is inconsistent');
+    }
+    if ((cause.status === 'open') !== (cause.closedAt === null) ||
+        (cause.status !== 'open' && remaining !== 0)) {
+      throw new ValidationError('negative cause status is inconsistent');
+    }
+  }
+}
+
 export function validateState(state, config) {
   assertPlainObject(state, 'state');
   if (state.schema !== STATE_SCHEMA || state.version !== 2) {
@@ -256,6 +329,8 @@ export function validateState(state, config) {
   assertTimePair(state.updatedAt, 'state.updatedAt');
   assertTimePair(state.lastTickAt, 'state.lastTickAt');
   assertTimePair(state.lastDecisionAt, 'state.lastDecisionAt', true);
+  assertTimePair(state.pendingCooldownUntil, 'state.pendingCooldownUntil', true);
+  validateNegativeCauses(state, config);
   assertDriveRecord(state.drives, 'state.drives', assertUnit);
   assertDriveRecord(state.lastSatisfiedAt, 'state.lastSatisfiedAt', (value, label) => assertTimePair(value, label, true));
   validateSolo(state.solo);

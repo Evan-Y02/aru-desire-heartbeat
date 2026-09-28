@@ -69,6 +69,27 @@ test('self-drive variation is bounded and reproducible', () => {
   assert.ok(first <= 1 + config.selfDriveVariation);
 });
 
+test('all drives converge away from mechanical zero and one boundaries', () => {
+  const ticks = 14 * 24 * 6;
+  const fromZero = simulateState(
+    stateWith(Object.fromEntries(DRIVES.map((drive) => [drive, 0]))),
+    config,
+    ticks,
+  ).state;
+  const fromOne = simulateState(
+    stateWith(Object.fromEntries(DRIVES.map((drive) => [drive, 1]))),
+    config,
+    ticks,
+  ).state;
+  for (const drive of DRIVES) {
+    assert.ok(config.driveReturnPerHour[drive] > 0);
+    assert.ok(fromZero.drives[drive] > 0.05 && fromZero.drives[drive] < 0.95);
+    assert.ok(fromOne.drives[drive] > 0.05 && fromOne.drives[drive] < 0.95);
+  }
+  assert.ok(Object.values(fromZero.lastSatisfiedAt).every((value) => value === null));
+  assert.ok(Object.values(fromOne.lastSatisfiedAt).every((value) => value === null));
+});
+
 test('reaching the threshold permits an autonomous action decision', () => {
   const expressive = structuredClone(config);
   expressive.expression.baseWillingness = 1;
@@ -140,7 +161,7 @@ test('solo satisfaction is proportional, counted, and cooled down', () => {
   assert.equal(cooled.soloEligible, false);
 });
 
-test('only self-driven needs rise without an event', () => {
+test('all drives move naturally toward an interior equilibrium', () => {
   const state = stateWith({
     reflection: 0.50,
     duty: 0.40,
@@ -155,18 +176,21 @@ test('only self-driven needs rise without an event', () => {
     assert.ok(next.drives[drive] < state.drives[drive], `${drive} should settle`);
     assert.ok(next.drives[drive] >= 0);
   }
-  for (const drive of DRIVES) assert.equal(config.driveHomeLevels[drive], 0);
+  for (const drive of DRIVES) {
+    assert.ok(config.driveHomeLevels[drive] > 0 && config.driveHomeLevels[drive] < 1);
+    assert.ok(config.driveReturnPerHour[drive] > 0);
+  }
   assert.equal(config.driveGrowthPerHour.reflection, 0);
   assert.equal(config.driveGrowthPerHour.duty, 0);
   assert.equal(config.driveGrowthPerHour.stress, 0);
 });
 
-test('event-driven needs do not rise from rest without an event', () => {
+test('event-driven needs recover from zero toward a non-extreme baseline', () => {
   const state = stateWith({ reflection: 0, duty: 0, stress: 0 });
   const next = tickState(state, config, NOW + 3_600_000).state;
-  assert.equal(next.drives.reflection, 0);
-  assert.equal(next.drives.duty, 0);
-  assert.equal(next.drives.stress, 0);
+  assert.ok(next.drives.reflection > 0 && next.drives.reflection < config.driveHomeLevels.reflection);
+  assert.ok(next.drives.duty > 0 && next.drives.duty < config.driveHomeLevels.duty);
+  assert.ok(next.drives.stress > 0 && next.drives.stress < config.driveHomeLevels.stress);
   const fed = feedDrive(next, config, 'reflection', 0.40, NOW + 3_600_001);
   const settled = tickState(fed, config, NOW + 7_200_001).state;
   assert.ok(settled.drives.reflection > 0);
@@ -398,6 +422,32 @@ test('loading a legacy state adds empty solo and expression state in memory', as
   assert.deepEqual(loaded.expression, { consecutiveWithholds: 0 });
   assert.deepEqual(loaded.drives, legacy.drives);
   assert.equal(loaded.sequence, legacy.sequence);
+});
+
+test('loading a legacy pending decision creates a stable restart fingerprint and expiry', async () => {
+  const directory = await secureTemp();
+  const decided = decideState(
+    stateWith({ attachment: 0.95, fatigue: 0.1 }),
+    config,
+    NOW,
+  ).state;
+  delete decided.pendingCooldownUntil;
+  delete decided.pendingDecision.fingerprint;
+  delete decided.pendingDecision.expiresAt;
+  await writeFile(
+    path.join(directory, 'state.json'),
+    JSON.stringify(decided) + '\n',
+    { mode: 0o600 },
+  );
+  const first = await loadState(directory, config);
+  const second = await loadState(directory, config);
+  assert.match(first.pendingDecision.fingerprint, /^[a-f0-9]{64}$/u);
+  assert.equal(second.pendingDecision.fingerprint, first.pendingDecision.fingerprint);
+  assert.equal(
+    first.pendingDecision.expiresAt.epochMs,
+    first.pendingDecision.createdAt.epochMs + config.pendingDecisionTtlSeconds * 1000,
+  );
+  assert.equal(first.pendingCooldownUntil, null);
 });
 
 test('atomic save produces a 0600 state and leaves no temporary file', async () => {

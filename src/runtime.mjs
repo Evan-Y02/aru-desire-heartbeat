@@ -1,5 +1,10 @@
 import { deliverPending, DeliveryError } from '../delivery/aru-adapter.mjs';
-import { satisfySoloDecision, tickState } from './engine.mjs';
+import {
+  armPendingDecisionWait,
+  disarmPendingDecisionWait,
+  satisfySoloDecision,
+  tickState,
+} from './engine.mjs';
 import { SOLO_INTENT } from './constants.mjs';
 import { atomicSaveState, loadState } from './storage.mjs';
 import { withLock } from './security.mjs';
@@ -7,6 +12,7 @@ import {
   appendTimeline,
   createTimelineEntry,
   finishLatestTimeline,
+  timelineEntryChanged,
 } from './timeline.mjs';
 
 export async function runHeartbeatCycle({
@@ -28,7 +34,10 @@ export async function runHeartbeatCycle({
     const extraReasons = [];
     let status = 'idle';
 
-    if (tick.expression?.expressed === false) {
+    if (tick.expiredDecision !== null) {
+      status = 'pending_expired';
+      extraReasons.push('pending-expired');
+    } else if (tick.expression?.expressed === false) {
       status = 'withheld';
       extraReasons.push('expression-withheld');
       const countReason = {
@@ -53,11 +62,20 @@ export async function runHeartbeatCycle({
       if (tick.expression.forcedReason) extraReasons.push(tick.expression.forcedReason);
     }
 
-    if (pending || tick.expression !== null) {
-      appendTimeline(
-        tick.state,
-        createTimelineEntry(tick, heartbeatConfig, nowMs, status, extraReasons),
+    if (pending && actionDisabled) {
+      const blocker = !isSolo && !deliveryConfig.enabled
+        ? 'delivery-adapter-disabled'
+        : pending.deliveryBlockers[0] ?? 'observe-only';
+      armPendingDecisionWait(tick.state, heartbeatConfig, nowMs, blocker);
+    } else if (pending && !actionDisabled) {
+      disarmPendingDecisionWait(tick.state);
+    }
+
+    if (pending || tick.expiredDecision !== null || tick.expression !== null) {
+      const entry = createTimelineEntry(
+        tick, heartbeatConfig, nowMs, status, extraReasons,
       );
+      if (timelineEntryChanged(tick.state, entry)) appendTimeline(tick.state, entry);
     }
 
     if (pending && isSolo && !actionDisabled && heartbeatConfig.soloSessionsEnabled) {

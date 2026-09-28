@@ -3,6 +3,7 @@ import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { assertSecureRegularFile, ensureSecureDirectory } from './security.mjs';
 import { validateConfig, validateState, ValidationError } from './schema.mjs';
+import { pendingDecisionFingerprint } from './pending-decision.mjs';
 
 export const STATE_FILE = 'state.json';
 
@@ -19,11 +20,11 @@ const SAFE_FEATURE_DEFAULTS = Object.freeze({
     intimacyNoReleaseCarryoverFactor: 0.80,
     singleCaps: {
       attachment: 0.08, curiosity: 0.03, reflection: 0.08, duty: 0.08,
-      social: 0.06, fatigue: 0, libido: 0.10, stress: 0.08,
+      social: 0.06, fatigue: 0.10, libido: 0.10, stress: 0.08,
     },
     windowCaps: {
       attachment: 0.20, curiosity: 0.08, reflection: 0.20, duty: 0.20,
-      social: 0.16, fatigue: 0, libido: 0.24, stress: 0.20,
+      social: 0.16, fatigue: 0.25, libido: 0.24, stress: 0.20,
     },
   },
   arousal: {
@@ -39,6 +40,8 @@ const SAFE_FEATURE_DEFAULTS = Object.freeze({
     ledgerMaxCount: 512,
     releaseCarryoverFactor: 0.30,
   },
+  pendingDecisionTtlSeconds: 1800,
+  pendingDecisionCooldownSeconds: 3600,
 });
 
 function normalizeConfig(config) {
@@ -48,6 +51,9 @@ function normalizeConfig(config) {
   ]) config[key] ??= SAFE_FEATURE_DEFAULTS[key];
   config.chatStimulus ??= structuredClone(SAFE_FEATURE_DEFAULTS.chatStimulus);
   config.arousal ??= structuredClone(SAFE_FEATURE_DEFAULTS.arousal);
+  config.pendingDecisionTtlSeconds ??= SAFE_FEATURE_DEFAULTS.pendingDecisionTtlSeconds;
+  config.pendingDecisionCooldownSeconds ??=
+    SAFE_FEATURE_DEFAULTS.pendingDecisionCooldownSeconds;
   config.solo.outputMultiplier ??= 0.80;
   config.solo.reserveCostMultiplier ??= 0.80;
   config.solo.sessionMaxCount ??= 24;
@@ -55,7 +61,7 @@ function normalizeConfig(config) {
   return config;
 }
 
-function normalizeState(state) {
+function normalizeState(state, config) {
   if (state.solo === undefined) {
     state.solo = {
       count: 0,
@@ -66,6 +72,25 @@ function normalizeState(state) {
   }
   if (state.expression === undefined) {
     state.expression = { consecutiveWithholds: 0 };
+  }
+  state.pendingCooldownUntil ??= null;
+  state.negativeCauseUpdatedAt ??= structuredClone(state.lastTickAt);
+  state.negativeCauses ??= [];
+  if (state.pendingDecision !== null) {
+    state.pendingDecision.fingerprint ??= pendingDecisionFingerprint(state.pendingDecision);
+    state.pendingDecision.expiresAt ??= state.pendingDecision.deliverySuppressed
+      ? {
+          epochMs: state.pendingDecision.createdAt.epochMs +
+            config.pendingDecisionTtlSeconds * 1000,
+          iso: new Date(
+            state.pendingDecision.createdAt.epochMs +
+              config.pendingDecisionTtlSeconds * 1000,
+          ).toISOString(),
+        }
+      : null;
+  }
+  if (Array.isArray(state.timeline)) {
+    for (const entry of state.timeline) entry.decisionFingerprint ??= null;
   }
   return state;
 }
@@ -84,7 +109,7 @@ export async function loadState(dataDirectory, config) {
   let state;
   try { state = JSON.parse(await readFile(statePath, 'utf8')); }
   catch { throw new ValidationError('state file is not valid JSON', 'STATE_CORRUPT'); }
-  return validateState(normalizeState(state), config);
+  return validateState(normalizeState(state, config), config);
 }
 
 export async function atomicSaveState(dataDirectory, state, config, { mustCreate = false } = {}) {

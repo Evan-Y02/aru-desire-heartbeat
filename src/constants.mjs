@@ -39,6 +39,7 @@ export const TIMELINE_OUTCOMES = Object.freeze([
   'delivery_failed',
   'solo_completed',
   'solo_selected',
+  'pending_expired',
 ]);
 export const TIMELINE_REASONS = Object.freeze([
   'clock-anomaly',
@@ -60,4 +61,6 @@ export const TIMELINE_REASONS = Object.freeze([
   'delivery-failed',
   'solo-completed',
   'solo-session-selected',
+  'pending-expired',
+  'pending-cooldown',
 ]);

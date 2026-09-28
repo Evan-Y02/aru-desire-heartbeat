@@ -98,6 +98,174 @@ test('disabled delivery holds a durable pending decision', async () => {
   assert.equal(saved.pendingDecision.id, result.decisionId);
   assert.equal(saved.timeline[0].outcome, 'held_disabled');
   assert.equal(saved.timeline[0].reasons.includes('delivery-adapter-disabled'), true);
+  assert.match(saved.pendingDecision.fingerprint, /^[a-f0-9]{64}$/u);
+  assert.equal(saved.timeline[0].decisionFingerprint, saved.pendingDecision.fingerprint);
+  assert.equal(
+    saved.pendingDecision.expiresAt.epochMs,
+    saved.pendingDecision.createdAt.epochMs + heartbeatConfig.pendingDecisionTtlSeconds * 1000,
+  );
+});
+
+test('same gated pending survives restart without duplicate timeline entries', async () => {
+  const directory = await tempDirectory();
+  const heartbeatConfig = structuredClone(baseConfig);
+  heartbeatConfig.expression.baseWillingness = 1;
+  await initial(directory, heartbeatConfig, { attachment: 0.95, fatigue: 0.1 });
+  const blocked = deliveryConfig(directory, false);
+  const first = await runHeartbeatCycle({
+    dataDirectory: directory,
+    heartbeatConfig,
+    deliveryConfig: blocked,
+    submitEvent: async () => assert.fail('sender must not run'),
+    nowMs: NOW + 600_000,
+  });
+  const afterFirst = await loadState(directory, heartbeatConfig);
+  const firstDrive = afterFirst.drives.attachment;
+  const firstFingerprint = afterFirst.pendingDecision.fingerprint;
+
+  const second = await runHeartbeatCycle({
+    dataDirectory: directory,
+    heartbeatConfig,
+    deliveryConfig: blocked,
+    submitEvent: async () => assert.fail('sender must not run'),
+    nowMs: NOW + 1_200_000,
+  });
+  const afterRestart = await loadState(directory, heartbeatConfig);
+  assert.equal(first.status, 'held_disabled');
+  assert.equal(second.status, 'held_disabled');
+  assert.equal(afterRestart.pendingDecision.fingerprint, firstFingerprint);
+  assert.equal(afterRestart.timeline.length, 1);
+  assert.notEqual(afterRestart.drives.attachment, firstDrive);
+  assert.equal(afterRestart.lastTickAt.epochMs, NOW + 1_200_000);
+});
+
+test('changed gate reason records once for the same pending fingerprint', async () => {
+  const directory = await tempDirectory();
+  const heartbeatConfig = structuredClone(baseConfig);
+  heartbeatConfig.expression.baseWillingness = 1;
+  await initial(directory, heartbeatConfig, { attachment: 0.95, fatigue: 0.1 });
+  await runHeartbeatCycle({
+    dataDirectory: directory,
+    heartbeatConfig,
+    deliveryConfig: deliveryConfig(directory, false),
+    submitEvent: async () => assert.fail('sender must not run'),
+    nowMs: NOW + 600_000,
+  });
+  await runHeartbeatCycle({
+    dataDirectory: directory,
+    heartbeatConfig,
+    deliveryConfig: deliveryConfig(directory, true),
+    submitEvent: async () => assert.fail('observe-only must not send'),
+    nowMs: NOW + 1_200_000,
+  });
+  await runHeartbeatCycle({
+    dataDirectory: directory,
+    heartbeatConfig,
+    deliveryConfig: deliveryConfig(directory, true),
+    submitEvent: async () => assert.fail('observe-only must not send'),
+    nowMs: NOW + 1_800_000,
+  });
+  const saved = await loadState(directory, heartbeatConfig);
+  assert.equal(saved.timeline.length, 2);
+  assert.equal(saved.timeline[0].decisionFingerprint, saved.timeline[1].decisionFingerprint);
+  assert.equal(saved.timeline[0].reasons.includes('delivery-adapter-disabled'), false);
+  assert.equal(saved.timeline[1].reasons.includes('delivery-adapter-disabled'), true);
+});
+
+test('gated pending expires without settlement, cools down, then gets a new identity', async () => {
+  const directory = await tempDirectory();
+  const heartbeatConfig = structuredClone(baseConfig);
+  heartbeatConfig.expression.baseWillingness = 1;
+  await initial(directory, heartbeatConfig, { attachment: 0.95, fatigue: 0.1 });
+  const blocked = deliveryConfig(directory, false);
+  const runAt = (nowMs) => runHeartbeatCycle({
+    dataDirectory: directory,
+    heartbeatConfig,
+    deliveryConfig: blocked,
+    submitEvent: async () => assert.fail('sender must not run'),
+    nowMs,
+  });
+
+  await runAt(NOW + 600_000);
+  const first = await loadState(directory, heartbeatConfig);
+  const firstFingerprint = first.pendingDecision.fingerprint;
+  await runAt(NOW + 1_200_000);
+  await runAt(NOW + 1_800_000);
+  const expired = await runAt(NOW + 2_400_000);
+  const afterExpiry = await loadState(directory, heartbeatConfig);
+  assert.equal(expired.status, 'pending_expired');
+  assert.equal(afterExpiry.pendingDecision, null);
+  assert.equal(afterExpiry.timeline.length, 2);
+  assert.equal(afterExpiry.timeline[0].outcome, 'pending_expired');
+  assert.equal(afterExpiry.timeline[0].decisionFingerprint, firstFingerprint);
+  assert.ok(Object.values(afterExpiry.lastSatisfiedAt).every((value) => value === null));
+
+  const cooling = await runAt(NOW + 3_000_000);
+  const duringCooldown = await loadState(directory, heartbeatConfig);
+  assert.equal(cooling.status, 'idle');
+  assert.equal(duringCooldown.pendingDecision, null);
+  assert.equal(duringCooldown.timeline.length, 2);
+
+  const replacement = await runAt(NOW + 6_000_000);
+  const afterReplacement = await loadState(directory, heartbeatConfig);
+  assert.equal(replacement.status, 'held_disabled');
+  assert.notEqual(afterReplacement.pendingDecision.fingerprint, firstFingerprint);
+  assert.equal(afterReplacement.timeline.length, 3);
+  assert.ok(Object.values(afterReplacement.lastSatisfiedAt).every((value) => value === null));
+});
+
+test('logical expiry survives restart and delayed heartbeat observation without extending cooldown', async () => {
+  const directory = await tempDirectory();
+  const heartbeatConfig = structuredClone(baseConfig);
+  heartbeatConfig.expression.baseWillingness = 1;
+  await initial(directory, heartbeatConfig, { attachment: 0.95, fatigue: 0.1 });
+  const blocked = deliveryConfig(directory, false);
+  const runAt = (nowMs) => runHeartbeatCycle({
+    dataDirectory: directory,
+    heartbeatConfig,
+    deliveryConfig: blocked,
+    submitEvent: async () => assert.fail('sender must not run'),
+    nowMs,
+  });
+
+  await runAt(NOW + 600_000);
+  const created = await loadState(directory, heartbeatConfig);
+  const fingerprint = created.pendingDecision.fingerprint;
+  const expiresAt = created.pendingDecision.expiresAt.epochMs;
+  assert.equal(expiresAt, NOW + 2_400_000);
+
+  const beforeBoundary = await runAt(expiresAt - 1);
+  assert.equal(beforeBoundary.status, 'held_disabled');
+  const persistedBeforeRestart = await loadState(directory, heartbeatConfig);
+  assert.equal(persistedBeforeRestart.pendingDecision.fingerprint, fingerprint);
+  assert.equal(persistedBeforeRestart.timeline.length, 1);
+
+  // Loading the persisted state models a service restart. Observation may be
+  // delayed by timer jitter, but the logical deadline and cooldown must not move.
+  const reloaded = await loadState(directory, heartbeatConfig);
+  assert.equal(reloaded.pendingDecision.expiresAt.epochMs, expiresAt);
+  const observed = await runAt(expiresAt + 70_000);
+  const afterObservation = await loadState(directory, heartbeatConfig);
+  assert.equal(observed.status, 'pending_expired');
+  assert.equal(afterObservation.pendingDecision, null);
+  assert.equal(
+    afterObservation.pendingCooldownUntil.epochMs,
+    expiresAt + heartbeatConfig.pendingDecisionCooldownSeconds * 1000,
+  );
+  assert.equal(afterObservation.timeline.length, 2);
+  assert.equal(afterObservation.timeline[0].decisionFingerprint, fingerprint);
+  assert.ok(Object.values(afterObservation.lastSatisfiedAt).every((value) => value === null));
+
+  const cooldownEnd = afterObservation.pendingCooldownUntil.epochMs;
+  const stillCooling = await runAt(cooldownEnd - 1);
+  assert.equal(stillCooling.status, 'idle');
+  assert.equal((await loadState(directory, heartbeatConfig)).pendingDecision, null);
+  const replacement = await runAt(cooldownEnd);
+  const final = await loadState(directory, heartbeatConfig);
+  assert.equal(replacement.status, 'held_disabled');
+  assert.notEqual(final.pendingDecision.fingerprint, fingerprint);
+  assert.equal(final.timeline.length, 3);
+  assert.ok(Object.values(final.lastSatisfiedAt).every((value) => value === null));
 });
 test('enabled cycle submits once and satisfies the desire', async () => {
   const directory = await tempDirectory();
