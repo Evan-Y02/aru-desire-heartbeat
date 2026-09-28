@@ -30,7 +30,8 @@ const EXPECTED_BASELINE_DIFFERENCES = Object.freeze([
   'run-node.sh',
 ]);
 const ALLOWED_GENERATED = new Set([
-  'aru-desire-turn-hook.mjs', 'synthetic-check.mjs', 'server.mjs', 'release-manifest.json',
+  'aru-desire-turn-hook.mjs', 'aru-desire-relay-turn.mjs', 'synthetic-check.mjs',
+  'server.mjs', 'release-manifest.json',
 ]);
 const UNITS = Object.freeze([
   'aru-selfhost.service',
@@ -51,7 +52,9 @@ const SAFE_BLOCKERS = new Set([
   'observe-only', 'delivery-disabled', 'delivery-adapter-disabled',
 ]);
 const SAFE_EVENT_LABELS = new Set([
-  'intimacy_longing', 'sexual_explicit', 'hurt_anger', 'needs_support',
+  'intimacy_longing', 'neutral_discussion', 'flirt_tease', 'direct_desire',
+  'sexual_explicit', 'concrete_intimate_action', 'partnered_no_release',
+  'partnered_release', 'solo_no_release', 'solo_release', 'hurt_anger', 'needs_support',
   'affirmation', 'ambiguous_affect', 'no_op', 'replay_reconciled',
   'non_assertion', 'question', 'negated_or_stop', 'hypothetical_or_plan',
   'tutorial', 'memory', 'third_person',

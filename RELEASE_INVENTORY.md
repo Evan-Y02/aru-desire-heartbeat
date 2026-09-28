@@ -1,5 +1,34 @@
 # Release inventory
 
+## 0.9.10
+
+The v0.9.10 source release contains the same 31-file recursive heartbeat and
+receiver runtime closure as v0.9.9 plus installation-only isolation and
+regression assets. Both generated manifests remain byte-identical and derive
+their semantic version, file sizes, hashes, and aggregate digest from the
+explicit 0.9.10 source checkout.
+
+Installation acceptance uses only a freshly created temporary state tree and a
+dynamic loopback receiver. Production state is never opened by that acceptance
+script or by the installer: production state filenames are absent from the
+installer and disabled receiver startup returns before opening or locking its
+data directory. Temporary fixtures are removed on success, injected failure,
+signal, or normal error.
+
+安装验收改为完全隔离的临时状态，不再向生产 receiver 注入 synthetic event。
+
+Integration-only Aru release files outside the recursive heartbeat closure are
+unchanged:
+
+- `aru-desire-turn-hook.mjs`
+- `aru-desire-relay-turn.mjs`
+- `synthetic-check.mjs`
+- patched `server.mjs`
+- patched `conversation-turn-relay.mjs`
+
+No generated production manifest or state file is committed. The v0.9.9 tag,
+commit, and every older release remain immutable.
+
 ## 0.9.9
 
 The source release contains the heartbeat/receiver runtime, the collaborator

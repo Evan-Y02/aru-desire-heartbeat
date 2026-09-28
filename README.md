@@ -19,6 +19,23 @@ The optional Solo Session layer separates autonomous selection from preparation,
 structured action beats, edge, release/no-release completion, and downstream
 settlement. It is also disabled by default. See `SOLO_SESSION_DESIGN.md`.
 
+## 0.9.10
+
+Version 0.9.10 makes installation acceptance completely independent of live
+Desire state. The installer runs its synthetic receive/replay check only against
+a newly created temporary configuration, state directory, ledgers, receipts,
+pending data, loopback port, and owner-only secret files. Cleanup runs on both
+success and failure, and the isolated check cannot call a real delivery endpoint.
+
+The installer requires `observeOnly=true` and `deliveryEnabled=false`, quiesces
+state writers, and never opens, copies, parses, hashes, creates, migrates, or
+writes either production state file. Receiver health starts with settlement
+recovery disabled and returns before opening state. Failures roll back code,
+hooks, manifests, deployment metadata, units, permissions, configuration, and
+service activity. The installer also requires an explicit 0.9.10 source path.
+
+安装验收改为完全隔离的临时状态，不再向生产 receiver 注入 synthetic event。
+
 ## 0.9.9
 
 Version 0.9.9 closes the complete-message sexual-stimulus and satisfaction

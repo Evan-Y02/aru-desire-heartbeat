@@ -88,3 +88,14 @@ Classified Solo completion does not require the optional generated Solo Session
 layer. It reports an already-completed event through the same protected receiver
 receipt boundary. Installation and gate changes remain deliberate; building
 this release performs neither.
+
+## Installation acceptance isolation
+
+The installation acceptance path and installer never read or copy production
+Desire or interaction state. A new temporary fixture receives every config,
+state, ledger, receipt, pending, secret, and loopback receiver path, verifies one
+receive/replay sequence, and is removed on success or failure. Production state
+filenames are absent from the installer, and disabled receiver startup returns
+before acquiring a production state lock or opening a state file.
+
+安装验收改为完全隔离的临时状态，不再向生产 receiver 注入 synthetic event。

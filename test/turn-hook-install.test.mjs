@@ -144,8 +144,8 @@ test('installer retains fail-closed rollback and never broadens permissions', as
   );
   assert.match(source, /trap 'handle_error "\$\?" "\$LINENO" "\$BASH_COMMAND"' ERR/u);
   assert.match(source, /mv -Tf .*CURRENT_LINK/u);
-  assert.match(source, /install -o aru-selfhost -g aru-selfhost -m 0600/u);
-  assert.match(source, /install -o aru-desire -g aru-desire -m 0600/u);
+  assert.match(source, /aru-selfhost:aru-selfhost:600:1/u);
+  assert.match(source, /aru-desire:aru-desire:600:1/u);
   const verifierSource = await readFile(
     path.join(ROOT, 'scripts/verify-runtime-release.mjs'), 'utf8',
   );
@@ -162,6 +162,7 @@ test('installer retains fail-closed rollback and never broadens permissions', as
   assert.match(source, /verify_desire_runtime_release/u);
   assert.match(source, /quiesce_heartbeat/u);
   assert.match(source, /preserve-feature-flags\.mjs" capture/u);
+  assert.match(source, /preserve-feature-flags\.mjs" require-safe/u);
   assert.match(source, /preserve-feature-flags\.mjs" restore/u);
   assert.match(source, /systemctl stop aru-desire-turn-receiver\.service/u);
   assert.match(source, /receiver_ready=false/u);
@@ -173,32 +174,40 @@ test('installer retains fail-closed rollback and never broadens permissions', as
   assert.match(source, /enable_interaction_flags/u);
   assert.match(source, /isolated_aru_service_identity_preflight/u);
   assert.match(source, /test-aru-patched-release-as-service-user\.sh/u);
-  assert.match(source, /ARU_DESIRE_TURN_HOOK_TIMEOUT_MS=2000/u);
-  assert.match(source, /INSTALL_STAGE=synthetic_preflight/u);
-  assert.match(source, /INSTALL_STAGE=synthetic_postflight/u);
-  assert.match(source, /randomBytes\(8\)\.toString\('hex'\)/u);
-  assert.match(source, /verify-synthetic-ledger\.mjs" \\\s+absent/u);
-  assert.match(source, /verify-synthetic-ledger\.mjs" \\\s+applied-once/u);
+  assert.match(source, /INSTALL_STAGE=isolated_synthetic_acceptance/u);
+  assert.match(source, /test-installed-hook-isolated-state\.sh/u);
+  assert.match(source, /env -u ARU_DESIRE_ISOLATED_TEST_MODE/u);
+  assert.match(source, /-u ARU_DESIRE_ISOLATED_TMP_PARENT/u);
+  assert.match(source, /-u ARU_DESIRE_ISOLATED_FORCE_FAILURE/u);
+  assert.match(source, /-u ARU_DESIRE_ISOLATED_PAUSE_AFTER_HEALTH_SECONDS/u);
+  assert.doesNotMatch(source, /(?:interaction-)?state\.json/u);
+  assert.doesNotMatch(source, /verify-synthetic-ledger\.mjs/u);
+  assert.doesNotMatch(source, /INSTALL_STAGE=synthetic_(?:preflight|end_to_end|postflight)/u);
+  assert.doesNotMatch(source, /runuser[\s\S]{0,300}synthetic-check\.mjs/u);
   assert.match(source, /SECRET_CHANNEL_BEFORE=present/u);
   assert.match(source, /cmp -s -- "\$ARU_SECRET" "\$DESIRE_SECRET"/u);
   assert.match(source, /restore_aru_hook_secret/u);
   assert.match(source, /restore_desire_hook_secret/u);
-  assert.match(source, /if \[\[ \$SECRET_CHANNEL_BEFORE == absent \]\]; then/u);
+  assert.doesNotMatch(source, /SECRET_CHANNEL_BEFORE == absent/u);
+  assert.doesNotMatch(source, /randomBytes\(48\)/u);
   assert.match(source, /remove_staged_current_link/u);
   assert.match(source, /startup logs never include credentials/u);
   assert.ok(source.indexOf('disable_staged_receiver') < source.indexOf('remove_new_receiver_unit'));
   assert.doesNotMatch(source, /disable --now aru-desire-turn-receiver/u);
   const orderedStages = [
+    'INSTALL_STAGE=isolated_synthetic_acceptance',
+    'INSTALL_STAGE=prepare_current_release',
+    'INSTALL_STAGE=verify_runtime_manifest_after_current_activation',
+    'INSTALL_STAGE=temporarily_disable_interaction_flags',
     'INSTALL_STAGE=start_receiver',
+    'INSTALL_STAGE=enable_interaction_flags',
     'INSTALL_STAGE=restart_aru',
     'INSTALL_STAGE=service_health',
-    'INSTALL_STAGE=enable_interaction_flags',
-    'INSTALL_STAGE=synthetic_end_to_end',
   ].map((marker) => source.indexOf(marker));
   assert.ok(orderedStages.every((position) => position >= 0));
   assert.deepEqual([...orderedStages].sort((left, right) => left - right), orderedStages);
-  assert.match(source, /DATA_FILES=\(state\.json interaction-state\.json\)/u);
-  assert.match(source, /restore_data_file:\$file[\s\S]*?install -o aru-desire -g aru-desire -m 0600/u);
+  assert.match(source, /disable_interaction_for_receiver_restore/u);
+  assert.match(source, /restore_exact_config_after_receiver_start/u);
   assert.match(source, /DEVICE_COUNT_AFTER == "\$DEVICE_COUNT_BEFORE"/u);
   assert.match(source, /BRIDGE_CODE_AFTER == "\$BRIDGE_CODE_BEFORE"/u);
   assert.match(source, /HEARTBEAT_TIMER_WAS_ACTIVE/u);
@@ -292,7 +301,7 @@ test('independent runtime manifest covers the exact closure and rejects absence 
   const parsed = JSON.parse(await readFile(manifest, 'utf8'));
   const packageMetadata = JSON.parse(await readFile(path.join(ROOT, 'package.json'), 'utf8'));
   assert.equal(parsed.schema, 'aru.desire-heartbeat.file-manifest.v1');
-  assert.equal(packageMetadata.version, '0.9.9');
+  assert.equal(packageMetadata.version, '0.9.10');
   assert.equal(parsed.version, packageMetadata.version);
   assert.equal(parsed.fileCount, files.length);
   assert.deepEqual(parsed.files.map((file) => file.path), files);
@@ -454,7 +463,38 @@ test('feature flag snapshot preserves all production gates exactly', async () =>
   assert.equal((await stat(snapshot)).mode & 0o777, 0o600);
 });
 
-test('exact installer rollback restores release, config, state, unit, and service states', async () => {
+test('installer safe-gate precondition is read-only and fails closed', async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'feature-safe-precondition-'));
+  directories.push(directory);
+  const config = path.join(directory, 'default.json');
+  const script = path.join(ROOT, 'scripts/preserve-feature-flags.mjs');
+  const original = JSON.parse(await readFile(path.join(ROOT, 'config/default.json'), 'utf8'));
+  Object.assign(original, { observeOnly: true, deliveryEnabled: false });
+  await writeFile(config, `${JSON.stringify(original, null, 2)}\n`, { mode: 0o640 });
+  const beforeBytes = await readFile(config);
+  const beforeMetadata = await stat(config, { bigint: true });
+  const safe = spawnSync(process.execPath, [script, 'require-safe', config], {
+    encoding: 'utf8',
+  });
+  assert.equal(safe.status, 0, safe.stderr);
+  assert.deepEqual(await readFile(config), beforeBytes);
+  const afterMetadata = await stat(config, { bigint: true });
+  for (const key of ['mode', 'uid', 'gid', 'size', 'mtimeNs']) {
+    assert.equal(afterMetadata[key], beforeMetadata[key], key);
+  }
+
+  original.deliveryEnabled = true;
+  await writeFile(config, `${JSON.stringify(original, null, 2)}\n`, { mode: 0o640 });
+  const unsafeBytes = await readFile(config);
+  const unsafe = spawnSync(process.execPath, [script, 'require-safe', config], {
+    encoding: 'utf8',
+  });
+  assert.notEqual(unsafe.status, 0);
+  assert.match(unsafe.stderr, /observeOnly=true and deliveryEnabled=false/u);
+  assert.deepEqual(await readFile(config), unsafeBytes);
+});
+
+test('exact installer rollback restores release, config, unit, hook, and service states', async () => {
   const source = await readFile(
     path.join(ROOT, 'scripts/install-complete-message-hook-once.sh'), 'utf8',
   );
@@ -467,18 +507,20 @@ test('exact installer rollback restores release, config, state, unit, and servic
   const newRelease = path.join(directory, 'new-release');
   const currentLink = path.join(directory, 'current');
   const desireRoot = path.join(directory, 'desire');
-  const desireData = path.join(directory, 'data');
   const backup = path.join(directory, 'backup');
   const receiverUnit = path.join(directory, 'systemd', 'receiver.service');
   const aruDropin = path.join(directory, 'systemd', 'aru.service.d', 'hook.conf');
   const aruSecret = path.join(directory, 'aru.secret');
   const desireSecret = path.join(directory, 'desire.secret');
   const serviceLog = path.join(directory, 'systemctl.log');
+  const oldConfig = await readFile(path.join(ROOT, 'config/default.json'));
+  const newConfig = Buffer.from(oldConfig.toString().replace(
+    '"chatStimulusEnabled": false', '"chatStimulusEnabled": true',
+  ));
   await Promise.all([
     mkdir(oldRelease, { recursive: true }), mkdir(newRelease, { recursive: true }),
     mkdir(path.join(desireRoot, 'config'), { recursive: true }),
     mkdir(path.join(desireRoot, 'src'), { recursive: true }),
-    mkdir(desireData, { recursive: true }),
     mkdir(path.join(backup, 'desire', 'config'), { recursive: true }),
     mkdir(path.join(backup, 'desire', 'src'), { recursive: true }),
     mkdir(path.join(backup, 'systemd'), { recursive: true }),
@@ -487,14 +529,14 @@ test('exact installer rollback restores release, config, state, unit, and servic
   await symlink(newRelease, currentLink);
   await symlink(newRelease, `${currentLink}.next`);
   await Promise.all([
-    writeFile(path.join(desireRoot, 'config/default.json'), 'new-config\n'),
+    writeFile(path.join(desireRoot, 'config/default.json'), newConfig),
     writeFile(path.join(desireRoot, 'src/engine.mjs'), 'new-engine\n'),
     writeFile(path.join(desireRoot, 'src/new-only.mjs'), 'new-only\n'),
     writeFile(path.join(desireRoot, 'release-manifest.json'), 'new-manifest\n'),
     writeFile(path.join(desireRoot, 'release-manifest.json.next'), 'partial-manifest\n'),
     writeFile(path.join(desireRoot, 'deployment-metadata.json'), 'new-expected\n'),
     writeFile(path.join(desireRoot, 'deployment-metadata.json.next'), 'partial-expected\n'),
-    writeFile(path.join(backup, 'desire/config/default.json'), 'old-config\n'),
+    writeFile(path.join(backup, 'desire/config/default.json'), oldConfig),
     writeFile(path.join(backup, 'desire/src/engine.mjs'), 'old-engine\n'),
     writeFile(path.join(backup, 'desire/release-manifest.json'), 'old-manifest\n'),
     writeFile(path.join(backup, 'desire/deployment-metadata.json'), 'old-expected\n'),
@@ -502,10 +544,6 @@ test('exact installer rollback restores release, config, state, unit, and servic
       path.join(backup, 'desire-missing-files'),
       'src/new-only.mjs\n',
     ),
-    writeFile(path.join(desireData, 'state.json'), 'new-state\n'),
-    writeFile(path.join(desireData, 'interaction-state.json'), 'new-interaction\n'),
-    writeFile(path.join(backup, 'state.json'), 'old-state\n'),
-    writeFile(path.join(backup, 'interaction-state.json'), 'old-interaction\n'),
     writeFile(receiverUnit, 'new-unit\n'),
     writeFile(aruDropin, 'new-dropin\n'),
     writeFile(path.join(backup, 'systemd/aru-desire-turn-receiver.service'), 'old-unit\n'),
@@ -516,19 +554,18 @@ test('exact installer rollback restores release, config, state, unit, and servic
   ]);
   await mkdir(path.join(backup, 'aru'), { recursive: true });
   await copyFile(path.join(backup, 'aru-turn-hook.secret'), path.join(backup, 'aru/turn-hook.secret'));
-
   const rehearsal = spawnSync('/bin/bash', ['-c', `
     set -Eeuo pipefail
     CURRENT_LINK=$1
     OLD_RELEASE=$2
     DESIRE_ROOT=$3
-    DESIRE_DATA=$4
-    BACKUP=$5
-    RECEIVER_UNIT=$6
-    ARU_DROPIN=$7
-    ARU_SECRET=$8
-    DESIRE_SECRET=$9
-    SERVICE_LOG=\${10}
+    BACKUP=$4
+    RECEIVER_UNIT=$5
+    ARU_DROPIN=$6
+    ARU_SECRET=$7
+    DESIRE_SECRET=$8
+    SERVICE_LOG=$9
+    SOURCE_ROOT=\${10}
     RECEIVER_WAS_ENABLED=enabled
     RECEIVER_WAS_ACTIVE=active
     ARU_WAS_ACTIVE=active
@@ -540,7 +577,6 @@ test('exact installer rollback restores release, config, state, unit, and servic
     RUNTIME_MANIFEST=release-manifest.json
     DEPLOYMENT_METADATA=deployment-metadata.json
     DESIRE_FILES=(config/default.json src/engine.mjs src/new-only.mjs release-manifest.json deployment-metadata.json)
-    DATA_FILES=(state.json interaction-state.json)
     systemctl() {
       printf '%s\\n' "$*" >> "$SERVICE_LOG"
       [[ $1 != is-enabled ]] || printf 'enabled\\n'
@@ -561,12 +597,12 @@ test('exact installer rollback restores release, config, state, unit, and servic
     }
     ${rollbackFunction}
     rollback
-  `, 'rollback-rehearsal', currentLink, oldRelease, desireRoot, desireData, backup,
-    receiverUnit, aruDropin, aruSecret, desireSecret, serviceLog], { encoding: 'utf8' });
+  `, 'rollback-rehearsal', currentLink, oldRelease, desireRoot, backup,
+    receiverUnit, aruDropin, aruSecret, desireSecret, serviceLog, ROOT], { encoding: 'utf8' });
   assert.equal(rehearsal.status, 0, rehearsal.stderr);
   assert.equal(await readlink(currentLink), oldRelease);
   await assert.rejects(() => stat(`${currentLink}.next`), { code: 'ENOENT' });
-  assert.equal(await readFile(path.join(desireRoot, 'config/default.json'), 'utf8'), 'old-config\n');
+  assert.deepEqual(await readFile(path.join(desireRoot, 'config/default.json')), oldConfig);
   assert.equal(await readFile(path.join(desireRoot, 'src/engine.mjs'), 'utf8'), 'old-engine\n');
   await assert.rejects(() => stat(path.join(desireRoot, 'src/new-only.mjs')), { code: 'ENOENT' });
   assert.equal(await readFile(path.join(desireRoot, 'release-manifest.json'), 'utf8'),
@@ -577,8 +613,6 @@ test('exact installer rollback restores release, config, state, unit, and servic
     'old-expected\n');
   await assert.rejects(() => stat(path.join(desireRoot, 'deployment-metadata.json.next')),
     { code: 'ENOENT' });
-  assert.equal(await readFile(path.join(desireData, 'state.json'), 'utf8'), 'old-state\n');
-  assert.equal(await readFile(path.join(desireData, 'interaction-state.json'), 'utf8'), 'old-interaction\n');
   assert.equal(await readFile(receiverUnit, 'utf8'), 'old-unit\n');
   assert.equal(await readFile(aruDropin, 'utf8'), 'old-dropin\n');
   assert.equal(await readFile(aruSecret, 'utf8'), 'old-secret\n');
@@ -616,18 +650,18 @@ test('installer reports the exact failing stage, command, and exit before rollba
   const rollbackRehearsal = spawnSync('/bin/bash', ['-c', `
     set -Eeuo pipefail
     ${handler}
-    INSTALL_STAGE=synthetic_end_to_end
+    INSTALL_STAGE=isolated_synthetic_acceptance
     ROLLBACK_READY=true
     rollback() { printf 'synthetic rollback invoked\\n' >&2; return 0; }
     trap 'handle_error "$?" "$LINENO" "$BASH_COMMAND"' ERR
     /bin/false
   `], { encoding: 'utf8' });
   assert.equal(rollbackRehearsal.status, 1);
-  assert.match(rollbackRehearsal.stderr, /stage=synthetic_end_to_end/u);
+  assert.match(rollbackRehearsal.stderr, /stage=isolated_synthetic_acceptance/u);
   assert.match(rollbackRehearsal.stderr, /synthetic rollback invoked/u);
   assert.match(rollbackRehearsal.stderr, /rollback completed/u);
   assert.ok(
-    rollbackRehearsal.stderr.indexOf('stage=synthetic_end_to_end') <
+    rollbackRehearsal.stderr.indexOf('stage=isolated_synthetic_acceptance') <
       rollbackRehearsal.stderr.indexOf('synthetic rollback invoked'),
   );
 

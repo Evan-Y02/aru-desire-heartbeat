@@ -136,12 +136,15 @@ export async function processCanonicalTurn({ event, configPath, dataDirectory })
 
 export async function recoverPendingSettlement({ configPath, dataDirectory }) {
   const config = await loadConfig(configPath);
+  // An installer may start the receiver with settlement temporarily disabled
+  // to perform a health check. Return before acquiring a production data lock
+  // or opening state so that this startup path is strictly state-neutral.
+  if (config.arousalDriveSettlementEnabled !== true) return { status: 'no_op' };
   return withLock(dataDirectory, async (directory) => {
     const desireState = await loadState(directory, config);
     const interactionState = await loadInteractionState(directory, config);
-    if (config.arousalDriveSettlementEnabled !== true ||
-        (!interactionState.chat.pendingSettlementReceipt &&
-          !interactionState.arousal.pendingReleaseReceipt)) {
+    if (!interactionState.chat.pendingSettlementReceipt &&
+        !interactionState.arousal.pendingReleaseReceipt) {
       return { status: 'no_op' };
     }
     const settled = await settleLoadedPendingReceipts({

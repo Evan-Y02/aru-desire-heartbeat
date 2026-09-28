@@ -3,6 +3,29 @@ set -Eeuo pipefail
 umask 077
 
 [[ ${EUID} -eq 0 ]] || { echo 'must run as root' >&2; exit 77; }
+[[ $# -eq 1 ]] || {
+  echo 'usage: install-complete-message-hook-once.sh /absolute/path/to/v0.9.10/source' >&2
+  exit 64
+}
+
+SCRIPT_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
+readonly SCRIPT_ROOT
+SOURCE_ROOT=$(readlink -f -- "$1")
+readonly SOURCE_ROOT
+[[ $SOURCE_ROOT == "$SCRIPT_ROOT" ]] || {
+  echo 'source root must be the checkout containing this installer' >&2
+  exit 64
+}
+SOURCE_VERSION=$(node - "$SOURCE_ROOT/package.json" <<'NODE'
+const fs = require('fs');
+process.stdout.write(JSON.parse(fs.readFileSync(process.argv[2], 'utf8')).version);
+NODE
+)
+readonly SOURCE_VERSION
+[[ $SOURCE_VERSION == 0.9.10 ]] || {
+  echo 'installer requires source version 0.9.10' >&2
+  exit 64
+}
 
 INSTALL_STAGE=initialization
 ROLLBACK_READY=false
@@ -30,7 +53,6 @@ handle_error() {
 
 trap 'handle_error "$?" "$LINENO" "$BASH_COMMAND"' ERR
 
-readonly SOURCE_ROOT=${1:-/home/xinchao/private/ChengXiao/desire-heartbeat}
 readonly CURRENT_LINK=/opt/aru-selfhost/current
 OLD_RELEASE=$(readlink -f "$CURRENT_LINK")
 readonly OLD_RELEASE
@@ -77,23 +99,19 @@ readonly DEVICE_COUNT_BEFORE
 BRIDGE_CODE_BEFORE=$(curl --silent --max-time 2 --output /dev/null --write-out '%{http_code}' \
   http://127.0.0.1:18110/bridge/v1/health)
 readonly BRIDGE_CODE_BEFORE
-SECRET_CHANNEL_BEFORE=absent
-if [[ -e $ARU_SECRET || -L $ARU_SECRET || -e $DESIRE_SECRET || -L $DESIRE_SECRET ]]; then
-  [[ -f $ARU_SECRET && ! -L $ARU_SECRET && -f $DESIRE_SECRET && ! -L $DESIRE_SECRET ]] || {
-    echo 'turn hook secret channel is incomplete or unsafe' >&2
-    exit 73
-  }
-  [[ $(stat -c '%U:%G:%a:%h' "$ARU_SECRET") == 'aru-selfhost:aru-selfhost:600:1' ]]
-  [[ $(stat -c '%U:%G:%a:%h' "$DESIRE_SECRET") == 'aru-desire:aru-desire:600:1' ]]
-  cmp -s -- "$ARU_SECRET" "$DESIRE_SECRET"
-  node - "$ARU_SECRET" <<'NODE'
+[[ -f $ARU_SECRET && ! -L $ARU_SECRET && -f $DESIRE_SECRET && ! -L $DESIRE_SECRET ]] || {
+  echo 'v0.9.10 safety upgrade requires the existing owner-only hook secret channel' >&2
+  exit 73
+}
+[[ $(stat -c '%U:%G:%a:%h' "$ARU_SECRET") == 'aru-selfhost:aru-selfhost:600:1' ]]
+[[ $(stat -c '%U:%G:%a:%h' "$DESIRE_SECRET") == 'aru-desire:aru-desire:600:1' ]]
+cmp -s -- "$ARU_SECRET" "$DESIRE_SECRET"
+node - "$ARU_SECRET" <<'NODE'
 const fs = require('fs');
 const value = fs.readFileSync(process.argv[2], 'utf8').trim();
 if (!/^[A-Za-z0-9_-]{43,128}$/.test(value)) process.exit(1);
 NODE
-  SECRET_CHANNEL_BEFORE=present
-fi
-readonly SECRET_CHANNEL_BEFORE
+readonly SECRET_CHANNEL_BEFORE=present
 
 runtime_release_output=$(node "$SOURCE_ROOT/scripts/verify-runtime-release.mjs" \
   list "$SOURCE_ROOT")
@@ -112,7 +130,6 @@ readonly DESIRE_FILES=(
   "$RUNTIME_MANIFEST"
   "$DEPLOYMENT_METADATA"
 )
-readonly DATA_FILES=(state.json interaction-state.json)
 [[ -f $DESIRE_ROOT/config/aru-delivery.json && ! -L $DESIRE_ROOT/config/aru-delivery.json ]]
 
 INSTALL_STAGE=isolated_aru_service_identity_preflight
@@ -123,6 +140,8 @@ mkdir -p "$BACKUP/aru" "$BACKUP/desire" "$BACKUP/systemd"
 chmod 0700 "$BACKUP"
 node "$SOURCE_ROOT/scripts/preserve-feature-flags.mjs" capture \
   "$DESIRE_ROOT/config/default.json" "$BACKUP/feature-flags.json"
+node "$SOURCE_ROOT/scripts/preserve-feature-flags.mjs" require-safe \
+  "$DESIRE_ROOT/config/default.json"
 cp -a "$OLD_RELEASE/server.mjs" "$BACKUP/aru/server.mjs"
 printf '%s\n' "$OLD_RELEASE" > "$BACKUP/aru/previous-release"
 for file in "${DESIRE_FILES[@]}"; do
@@ -131,13 +150,6 @@ for file in "${DESIRE_FILES[@]}"; do
     cp -a "$DESIRE_ROOT/$file" "$BACKUP/desire/$file"
   else
     printf '%s\n' "$file" >> "$BACKUP/desire-missing-files"
-  fi
-done
-for file in "${DATA_FILES[@]}"; do
-  if [[ -f "$DESIRE_DATA/$file" ]]; then
-    install -m 0600 "$DESIRE_DATA/$file" "$BACKUP/$file"
-  else
-    printf '%s\n' "$file" >> "$BACKUP/data-missing-files"
   fi
 done
 [[ -f "$RECEIVER_UNIT" ]] && cp -a "$RECEIVER_UNIT" "$BACKUP/systemd/"
@@ -184,17 +196,6 @@ rollback() {
       rollback_run "remove_new_desire_file:$file" rm -f "$DESIRE_ROOT/$file"
     done < "$BACKUP/desire-missing-files"
   fi
-  for file in "${DATA_FILES[@]}"; do
-    [[ -f "$BACKUP/$file" ]] || continue
-    rollback_run "restore_data_file:$file" install -o aru-desire -g aru-desire -m 0600 \
-      "$BACKUP/$file" "$DESIRE_DATA/$file"
-  done
-  if [[ -f "$BACKUP/data-missing-files" ]]; then
-    while IFS= read -r file; do
-      [[ $file == state.json || $file == interaction-state.json ]] || continue
-      rollback_run "remove_new_data_file:$file" rm -f "$DESIRE_DATA/$file"
-    done < "$BACKUP/data-missing-files"
-  fi
   if [[ -f "$BACKUP/systemd/aru-desire-turn-receiver.service" ]]; then
     rollback_run restore_receiver_unit install -o root -g root -m 0644 \
       "$BACKUP/systemd/aru-desire-turn-receiver.service" "$RECEIVER_UNIT"
@@ -215,6 +216,12 @@ rollback() {
   else
     rollback_run remove_new_hook_secrets rm -f "$ARU_SECRET" "$DESIRE_SECRET"
   fi
+  if [[ $RECEIVER_WAS_ACTIVE == active && -f $BACKUP/desire/config/default.json ]]; then
+    rollback_run disable_interaction_for_receiver_restore node \
+      "$SOURCE_ROOT/scripts/set-interaction-flags.mjs" "$DESIRE_ROOT/config/default.json" \
+      chatStimulusEnabled=false arousalEnabled=false \
+      arousalDriveSettlementEnabled=false soloSessionsEnabled=false
+  fi
   rollback_run daemon_reload systemctl daemon-reload
   if [[ $RECEIVER_WAS_ENABLED == enabled ]]; then
     rollback_run restore_receiver_enabled systemctl enable aru-desire-turn-receiver.service
@@ -223,6 +230,10 @@ rollback() {
     rollback_run restore_receiver_active systemctl restart aru-desire-turn-receiver.service
   elif [[ -f $RECEIVER_UNIT ]]; then
     rollback_run restore_receiver_inactive systemctl stop aru-desire-turn-receiver.service
+  fi
+  if [[ $RECEIVER_WAS_ACTIVE == active && -f $BACKUP/desire/config/default.json ]]; then
+    rollback_run restore_exact_config_after_receiver_start cp -a -- \
+      "$BACKUP/desire/config/default.json" "$DESIRE_ROOT/config/default.json"
   fi
   if [[ $ARU_WAS_ACTIVE == active ]]; then
     rollback_run restore_aru_active systemctl restart aru-selfhost.service
@@ -257,6 +268,11 @@ for _ in {1..50}; do
   sleep 0.1
 done
 [[ $(systemctl is-active "$HEARTBEAT_SERVICE" || true) != active ]]
+
+INSTALL_STAGE=quiesce_message_state_writers
+systemctl stop aru-selfhost.service aru-desire-turn-receiver.service
+[[ $(systemctl is-active aru-selfhost.service || true) != active ]]
+[[ $(systemctl is-active aru-desire-turn-receiver.service || true) != active ]]
 
 INSTALL_STAGE=stage_aru_release
 cp -a "$OLD_RELEASE" "$NEW_RELEASE"
@@ -318,25 +334,19 @@ node "$DESIRE_ROOT/scripts/runtime-release-manifest.mjs" verify \
 cmp -s -- "$DESIRE_ROOT/$RUNTIME_MANIFEST" "$NEW_RELEASE/$RUNTIME_MANIFEST"
 [[ $(stat -c '%U:%G:%a:%h' "$DESIRE_ROOT/$RUNTIME_MANIFEST") == 'root:root:644:1' ]]
 [[ $(stat -c '%U:%G:%a:%h' "$NEW_RELEASE/$RUNTIME_MANIFEST") == 'root:root:644:1' ]]
-node "$DESIRE_ROOT/scripts/set-interaction-flags.mjs" "$DESIRE_ROOT/config/default.json" \
-  chatStimulusEnabled=false arousalEnabled=false \
-  arousalDriveSettlementEnabled=false soloSessionsEnabled=false
 
-INSTALL_STAGE=initialize_interaction_state
-if [[ ! -f "$DESIRE_DATA/interaction-state.json" ]]; then
-  runuser -u aru-desire -- node "$DESIRE_ROOT/bin/desire-interaction-init.mjs" \
-    --config "$DESIRE_ROOT/config/default.json" --data-dir "$DESIRE_DATA"
-fi
+INSTALL_STAGE=isolated_synthetic_acceptance
+env -u ARU_DESIRE_ISOLATED_TEST_MODE \
+  -u ARU_DESIRE_ISOLATED_TMP_PARENT \
+  -u ARU_DESIRE_ISOLATED_FORCE_FAILURE \
+  -u ARU_DESIRE_ISOLATED_PAUSE_AFTER_HEALTH_SECONDS \
+  bash "$SOURCE_ROOT/scripts/test-installed-hook-isolated-state.sh" \
+  "$SOURCE_ROOT" "$DESIRE_ROOT" "$NEW_RELEASE"
 
-INSTALL_STAGE=install_local_channel
-if [[ $SECRET_CHANNEL_BEFORE == absent ]]; then
-  secret=$(node -e "process.stdout.write(require('node:crypto').randomBytes(48).toString('base64url'))")
-  install -o aru-selfhost -g aru-selfhost -m 0600 /dev/null "$ARU_SECRET"
-  install -o aru-desire -g aru-desire -m 0600 /dev/null "$DESIRE_SECRET"
-  printf '%s\n' "$secret" > "$ARU_SECRET"
-  printf '%s\n' "$secret" > "$DESIRE_SECRET"
-  unset secret
-fi
+INSTALL_STAGE=verify_local_channel_preserved
+cmp -s -- "$ARU_SECRET" "$DESIRE_SECRET"
+[[ $(stat -c '%U:%G:%a:%h' "$ARU_SECRET") == 'aru-selfhost:aru-selfhost:600:1' ]]
+[[ $(stat -c '%U:%G:%a:%h' "$DESIRE_SECRET") == 'aru-desire:aru-desire:600:1' ]]
 
 install -o root -g root -m 0644 "$SOURCE_ROOT/systemd/aru-desire-turn-receiver.service" "$RECEIVER_UNIT"
 install -D -o root -g root -m 0644 "$SOURCE_ROOT/systemd/aru-selfhost-desire-turn-hook.conf" "$ARU_DROPIN"
@@ -361,6 +371,12 @@ INSTALL_STAGE=verify_runtime_manifest_after_current_activation
 node "$SOURCE_ROOT/scripts/formal-release-layout.mjs" verify \
   "$CURRENT_LINK" "$DESIRE_ROOT" "$DESIRE_ROOT/$DEPLOYMENT_METADATA" >/dev/null
 [[ $(stat -c '%U:%G:%a:%h' "$DESIRE_ROOT/$DEPLOYMENT_METADATA") == 'root:root:644:1' ]]
+
+INSTALL_STAGE=temporarily_disable_interaction_flags
+node "$DESIRE_ROOT/scripts/set-interaction-flags.mjs" "$DESIRE_ROOT/config/default.json" \
+  chatStimulusEnabled=false arousalEnabled=false \
+  arousalDriveSettlementEnabled=false soloSessionsEnabled=false
+
 systemctl daemon-reload
 INSTALL_STAGE=start_receiver
 systemctl enable --now aru-desire-turn-receiver.service
@@ -374,6 +390,23 @@ for _ in {1..40}; do
   sleep 0.1
 done
 [[ $receiver_ready == true ]]
+systemctl is-active --quiet aru-desire-turn-receiver.service
+curl --fail --silent --max-time 2 http://127.0.0.1:18761/healthz >/dev/null
+
+INSTALL_STAGE=enable_interaction_flags
+node "$DESIRE_ROOT/scripts/preserve-feature-flags.mjs" restore \
+  "$DESIRE_ROOT/config/default.json" "$BACKUP/feature-flags.json"
+node "$DESIRE_ROOT/scripts/preserve-feature-flags.mjs" verify \
+  "$DESIRE_ROOT/config/default.json" "$BACKUP/feature-flags.json"
+node "$SOURCE_ROOT/scripts/verify-runtime-release.mjs" verify \
+  "$SOURCE_ROOT" "$DESIRE_ROOT" >/dev/null
+node "$DESIRE_ROOT/scripts/runtime-release-manifest.mjs" verify \
+  "$DESIRE_ROOT" "$DESIRE_ROOT/$RUNTIME_MANIFEST" >/dev/null
+node "$SOURCE_ROOT/scripts/formal-release-layout.mjs" verify \
+  "$CURRENT_LINK" "$DESIRE_ROOT" "$DESIRE_ROOT/$DEPLOYMENT_METADATA" >/dev/null
+systemctl is-active --quiet aru-desire-turn-receiver.service
+systemctl is-active --quiet aru-desire-dashboard.service
+
 INSTALL_STAGE=restart_aru
 systemctl restart aru-selfhost.service
 INSTALL_STAGE=restart_dashboard
@@ -391,7 +424,6 @@ done
 systemctl is-active --quiet aru-selfhost.service
 systemctl is-active --quiet aru-desire-turn-receiver.service
 systemctl is-active --quiet aru-desire-dashboard.service
-curl --fail --silent --max-time 2 http://127.0.0.1:18761/healthz >/dev/null
 DEVICE_COUNT_AFTER=$(curl --fail --silent --max-time 2 \
   http://127.0.0.1:8788/aru/v1/diagnostics | \
   node -e "let s='';process.stdin.on('data',c=>s+=c).on('end',()=>process.stdout.write(String(JSON.parse(s).deviceCount)))")
@@ -401,38 +433,6 @@ BRIDGE_CODE_AFTER=$(curl --silent --max-time 2 --output /dev/null --write-out '%
 readonly BRIDGE_CODE_AFTER
 [[ $DEVICE_COUNT_AFTER == "$DEVICE_COUNT_BEFORE" ]]
 [[ $BRIDGE_CODE_AFTER == "$BRIDGE_CODE_BEFORE" ]]
-
-INSTALL_STAGE=enable_interaction_flags
-node "$DESIRE_ROOT/scripts/preserve-feature-flags.mjs" restore \
-  "$DESIRE_ROOT/config/default.json" "$BACKUP/feature-flags.json"
-node "$DESIRE_ROOT/scripts/preserve-feature-flags.mjs" verify \
-  "$DESIRE_ROOT/config/default.json" "$BACKUP/feature-flags.json"
-node "$SOURCE_ROOT/scripts/verify-runtime-release.mjs" verify \
-  "$SOURCE_ROOT" "$DESIRE_ROOT" >/dev/null
-node "$DESIRE_ROOT/scripts/runtime-release-manifest.mjs" verify \
-  "$DESIRE_ROOT" "$DESIRE_ROOT/$RUNTIME_MANIFEST" >/dev/null
-node "$SOURCE_ROOT/scripts/formal-release-layout.mjs" verify \
-  "$CURRENT_LINK" "$DESIRE_ROOT" "$DESIRE_ROOT/$DEPLOYMENT_METADATA" >/dev/null
-systemctl restart aru-desire-turn-receiver.service
-systemctl restart aru-desire-dashboard.service
-systemctl is-active --quiet aru-desire-turn-receiver.service
-systemctl is-active --quiet aru-desire-dashboard.service
-ACTIVATION_NONCE=$(node -e "process.stdout.write(require('node:crypto').randomBytes(8).toString('hex'))")
-readonly ACTIVATION_ID="activation-${STAMP}-${ACTIVATION_NONCE}"
-unset ACTIVATION_NONCE
-INSTALL_STAGE=synthetic_preflight
-runuser -u aru-desire -- node "$DESIRE_ROOT/scripts/verify-synthetic-ledger.mjs" \
-  absent "$DESIRE_ROOT/config/default.json" "$DESIRE_DATA" "$ACTIVATION_ID"
-INSTALL_STAGE=synthetic_end_to_end
-runuser -u aru-selfhost -- env \
-  ARU_DESIRE_TURN_HOOK_ENABLED=true \
-  ARU_DESIRE_TURN_HOOK_ENDPOINT=http://127.0.0.1:18761/v1/complete-message \
-  ARU_DESIRE_TURN_HOOK_SECRET_FILE="$ARU_SECRET" \
-  ARU_DESIRE_TURN_HOOK_TIMEOUT_MS=2000 \
-  node "$NEW_RELEASE/synthetic-check.mjs" "$ACTIVATION_ID"
-INSTALL_STAGE=synthetic_postflight
-runuser -u aru-desire -- node "$DESIRE_ROOT/scripts/verify-synthetic-ledger.mjs" \
-  applied-once "$DESIRE_ROOT/config/default.json" "$DESIRE_DATA" "$ACTIVATION_ID"
 INSTALL_STAGE=restore_service_states
 if [[ $RECEIVER_WAS_ENABLED == enabled ]]; then
   systemctl enable aru-desire-turn-receiver.service >/dev/null

@@ -53,6 +53,21 @@ async function setup() {
   return { directory, dataDirectory: directory, configPath, config };
 }
 
+test('disabled startup recovery returns before opening or locking state', async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'turn-receiver-disabled-startup-'));
+  directories.push(directory);
+  const configPath = path.join(directory, 'default.json');
+  const missingData = path.join(directory, 'production-state-must-not-be-opened');
+  const config = JSON.parse(await readFile(path.join(ROOT, 'config/default.json'), 'utf8'));
+  config.arousalDriveSettlementEnabled = false;
+  await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`);
+  assert.deepEqual(
+    await recoverPendingSettlement({ configPath, dataDirectory: missingData }),
+    { status: 'no_op' },
+  );
+  await assert.rejects(() => stat(missingData), { code: 'ENOENT' });
+});
+
 function event(id, text, completedAt, role = 'user') {
   const identity = {
     conversationId: 'hostconv_synthetic_e2e',

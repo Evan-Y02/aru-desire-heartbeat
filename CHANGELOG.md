@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.9.10
+
+- Move installation receive/replay acceptance into a fresh temporary config,
+  state directory, ledger, receipt, pending namespace, secret pair, and dynamic
+  loopback endpoint; clean the fixture on success and failure.
+- Remove every synthetic request and synthetic-ledger assertion against the
+  production receiver and production Desire data directory.
+- Remove production state filenames and state backup/hash operations from the
+  installer. Quiesce writers and make disabled receiver startup return before
+  opening or locking state, so installation cannot pollute and later restore it.
+- Require the explicit checkout containing the installer at semantic version
+  0.9.10, retain `observeOnly=true` and `deliveryEnabled=false`, and preserve the
+  prior service identities, activity, permissions, manifests, and release link.
+- 安装验收改为完全隔离的临时状态，不再向生产 receiver 注入 synthetic event。
+
 ## 0.9.9
 
 - Add mutually exclusive `neutral_discussion`, `flirt_tease`, `direct_desire`,

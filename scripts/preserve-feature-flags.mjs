@@ -33,8 +33,21 @@ async function writeAtomic(file, value, mode) {
 }
 
 const [command, configFile, snapshotFile] = process.argv.slice(2);
+if (command === 'require-safe') {
+  if (!configFile || snapshotFile) {
+    throw new Error('usage: preserve-feature-flags.mjs require-safe CONFIG');
+  }
+  const config = JSON.parse(await readFile(configFile, 'utf8'));
+  const flags = flagRecord(config);
+  if (flags.observeOnly !== true || flags.deliveryEnabled !== false) {
+    throw new Error('installation requires observeOnly=true and deliveryEnabled=false');
+  }
+  process.exit(0);
+}
 if (!['capture', 'restore', 'verify'].includes(command) || !configFile || !snapshotFile) {
-  throw new Error('usage: preserve-feature-flags.mjs capture|restore|verify CONFIG SNAPSHOT');
+  throw new Error(
+    'usage: preserve-feature-flags.mjs capture|restore|verify CONFIG SNAPSHOT',
+  );
 }
 if (command === 'capture') {
   const config = JSON.parse(await readFile(configFile, 'utf8'));

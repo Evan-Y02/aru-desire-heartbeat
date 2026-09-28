@@ -24,14 +24,25 @@ body state, text-free fact fingerprints, and receipt/effect ledgers. Pending
 settlement receipts are recovered before duplicate short-circuiting and once at
 receiver startup.
 
-`install-complete-message-hook-once.sh` creates a timestamped code-only backup,
-builds a new Aru release instead of editing the active release in place,
-initializes interaction state through the project initializer, installs the
-receiver and feature-gated hook, and verifies service, device-count, bridge, and
-loopback health. Its error trap restores the prior Aru symlink, Desire code and
-configuration, owner-only hook secret files, interaction state, and prior
-service activity without printing secret values. Conversation content is never
-written to the backup.
+`install-complete-message-hook-once.sh` requires the explicit source checkout,
+creates a timestamped recoverable backup, and builds a new Aru release instead
+of editing the active release in place. Before activation it runs receive/replay
+acceptance with a dynamic loopback receiver whose config, Desire state,
+interaction state, ledgers, receipts, pending records, and secret files all live
+under one new temporary directory. The fixture is removed on success and every
+failure path, and no real delivery endpoint is configured.
+
+Production Aru, receiver, and heartbeat writers are quiesced, but the installer
+never opens, copies, parses, hashes, creates, migrates, or writes production
+Desire or interaction state. The production state filenames are deliberately
+absent from the installer. Receiver health runs with settlement recovery
+temporarily disabled; that startup path returns before acquiring a state lock or
+opening state. Its error trap restores the prior Aru symlink, Desire code and
+configuration, manifests, deployment metadata, owner-only hook secret files,
+permissions, loaded paths, and prior service activity without printing secret
+values. No production state or conversation content is written to the backup.
+
+安装验收改为完全隔离的临时状态，不再向生产 receiver 注入 synthetic event。
 
 Generated Solo Sessions remain disabled by default. Classified reports of an
 already-completed Solo event are separate from that generation feature and can
