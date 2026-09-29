@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 const enablePath = new URL('../scripts/enable-autonomy-once.sh', import.meta.url);
+const preflightPath = new URL('../scripts/autonomy-activation-preflight.mjs', import.meta.url);
 const disablePath = new URL('../scripts/disable-autonomy-once.sh', import.meta.url);
 const rollbackPath = new URL('../scripts/rollback-autonomy.sh', import.meta.url);
 const recoveryPath = new URL('../scripts/recover-stalled-delivery-once.sh', import.meta.url);
@@ -22,21 +23,36 @@ test('heartbeat units avoid startup catch-up and run Node without JIT', async ()
 
 test('autonomy enable rebases safely before opening every gate', async () => {
   const source = await readFile(enablePath, 'utf8');
+  const preflight = await readFile(preflightPath, 'utf8');
   assert.match(source, /trap rollback_failure EXIT ERR INT TERM/);
   assert.match(source, /credential permissions are unsafe/);
   assert.match(source, /parseSenderBundle/);
   assert.match(source, /127\.0\.0\.1:8788\/\.well-known\/aru\.json/);
   assert.match(source, /aru\.xinchaonian\.duckdns\.org\/\.well-known\/aru\.json/);
-  assert.match(source, /installed systemd unit differs from source; upgrade first/);
+  assert.match(source, /--preflight/);
+  assert.match(source, /privacy_safe_preflight/);
+  assert.match(source, /systemctl stop "\$TIMER"/);
+  assert.ok(source.indexOf('systemctl stop "$TIMER"') <
+    source.indexOf('a pending decision must be resolved before enabling'));
+  assert.doesNotMatch(source, /readonly SOURCE="\/home\/xinchao/u);
+  assert.doesNotMatch(source, /x\.enabled=true;fs\.writeFileSync/u);
+  const rollback = source.slice(
+    source.indexOf('rollback_failure() {'), source.indexOf('privacy_safe_preflight() {'),
+  );
+  assert.ok(rollback.indexOf('rm -f -- "$ENABLE_FILE"') <
+    rollback.lastIndexOf('systemctl start "$TIMER"'));
   assert.match(source, /rebase-clock/);
   assert.match(source, /clock rebase changed protected state content/);
   assert.match(source, /defaultExpression=\{consecutiveWithholds:0\}/);
   assert.match(source, /x\.observeOnly=false;x\.deliveryEnabled=true/);
-  assert.match(source, /x\.enabled=true/);
   assert.match(source, /aru-desire-heartbeat-external-trigger-v1/);
   assert.match(source, /systemctl enable --now "\$TIMER"/);
   assert.ok(source.indexOf('rebase-clock') < source.indexOf('systemctl enable --now'));
   assert.doesNotMatch(source, /set -x/);
+  assert.match(preflight, /timingSafeEqual/);
+  assert.match(preflight, /PREFLIGHT_IDENTITY_ERROR/);
+  assert.match(preflight, /state\.pendingDecision !== null/);
+  assert.doesNotMatch(preflight, /console\.(?:log|error)/u);
 });
 
 test('stalled delivery recovery is narrow, backed up, and timer-off', async () => {

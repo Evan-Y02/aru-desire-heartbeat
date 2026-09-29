@@ -127,12 +127,19 @@ test('solo decisions are rejected before any external access', async () => {
 
 test('event identifies an internal automatic trigger, not user input', () => {
   const config = heartbeatConfig();
-  const event = buildDesireEvent(pendingState(config), NOW + 3);
+  const state = pendingState(config);
+  const privateThought = state.thoughts[0].text;
+  const event = buildDesireEvent(state, NOW + 3);
   assert.equal(event.eventType, 'desire_threshold_reached');
   assert.equal(event.userAuthored, false);
   assert.equal(event.purpose, 'automatic_trigger');
   assert.equal(event.decision.drive, 'attachment');
-  assert.equal(event.relatedThoughts.length, 1);
+  assert.deepEqual(Object.keys(event.decision).sort(), ['drive', 'id', 'intent']);
+  assert.equal(Object.hasOwn(event, 'drives'), false);
+  assert.equal(Object.hasOwn(event, 'relatedThoughts'), false);
+  assert.equal(Object.hasOwn(event.decision, 'score'), false);
+  assert.equal(Object.hasOwn(event.decision, 'wantAction'), false);
+  assert.equal(JSON.stringify(event).includes(privateThought), false);
   assert.match(event.guidance.join(' '), /不是解月发来的消息/);
 });
 test('exact enable file is required', async () => {

@@ -1,5 +1,18 @@
 # Release inventory
 
+## 0.9.13
+
+The v0.9.13 candidate minimizes the external-trigger payload and adds a
+privacy-safe, root-only, read-only activation preflight. The preflight compares
+the installed and provisioning sender identities without disclosure, returns
+before credential access when a pending decision exists, and emits only fixed
+statuses and category counts. Activation preserves unrelated feature gates and
+cannot race an active timer through its final pending-decision check.
+
+The v0.9.12 tag and all earlier tags remain immutable. Production remains on
+its separately installed version until this candidate is reviewed, published,
+and explicitly installed.
+
 ## 0.9.12
 
 The v0.9.12 source removes the v0.9.11 auditor's installation-specific backup

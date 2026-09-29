@@ -101,7 +101,19 @@ an unauthenticated request receives HTTP 401.
 ## 7. Enable Aru delivery
 
 Follow `ARU_INTEGRATION.md` first. Once the sender bundle is installed with
-owner `aru-desire` and mode `0600`, run:
+owner `aru-desire` and mode `0600`, run the read-only preflight first:
+
+```bash
+sudo ./scripts/enable-autonomy-once.sh --preflight
+```
+
+It makes no network request and prints only fixed status names and counts. If a
+pending decision exists, it stops before reading either credential. It also
+silently requires the installed bundle to match the existing owner-only
+provisioning bundle. A running timer is reported through
+`TIMER_QUIESCE_REQUIRED=1` and is not changed by preflight.
+
+Only after a PASS and a separate decision to activate, run:
 
 ```bash
 sudo ARU_LOCAL_MANIFEST_URL=http://127.0.0.1:8788/.well-known/aru.json \
@@ -111,8 +123,10 @@ sudo ARU_LOCAL_MANIFEST_URL=http://127.0.0.1:8788/.well-known/aru.json \
 If you also require an externally reachable manifest, set
 `ARU_PUBLIC_MANIFEST_URL=https://aru.example.com/.well-known/aru.json`.
 
-The activation script rebases the clock without growth, opens all explicit
-delivery gates, enables the timer, and prints rollback and stop commands.
+The activation script stops the timer, rechecks that no pending decision exists,
+rebases the clock without growth, opens the two outer delivery gates while
+preserving unrelated feature gates, enables the timer, and prints rollback and
+stop commands. A failure restores the timer's prior enabled/active state.
 
 ## 8. Stop safely
 

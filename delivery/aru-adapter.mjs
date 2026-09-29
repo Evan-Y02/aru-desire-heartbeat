@@ -80,21 +80,6 @@ async function requireEnableFile(file) {
     throw new DeliveryError('delivery enable file does not match', 'DELIVERY_NOT_ENABLED');
   }
 }
-function relatedThoughts(state, drive) {
-  return state.thoughts
-    .filter((thought) => thought.drive === drive)
-    .sort((left, right) => right.intensity - left.intensity ||
-      right.updatedAt.epochMs - left.updatedAt.epochMs)
-    .slice(0, 8)
-    .map((thought) => ({
-      id: thought.id,
-      type: thought.type,
-      intensity: thought.intensity,
-      text: thought.text,
-      updatedAt: thought.updatedAt,
-    }));
-}
-
 export function buildDesireEvent(state, nowMs = Date.now()) {
   const decision = state.pendingDecision;
   if (!decision) throw new DeliveryError('there is no pending decision', 'NO_PENDING_DECISION');
@@ -110,11 +95,7 @@ export function buildDesireEvent(state, nowMs = Date.now()) {
       id: decision.id,
       drive: decision.drive,
       intent: decision.intent,
-      score: decision.score,
-      wantAction: structuredClone(decision.wantAction),
     },
-    drives: structuredClone(state.drives),
-    relatedThoughts: relatedThoughts(state, decision.drive),
     guidance: [
       '这是欲望系统产生的内部状态事件，不是解月发来的消息。',
       '请读取 Aru 当前对话与记忆，结合时间、关系上下文和本次欲望自主决定如何主动联系解月。',

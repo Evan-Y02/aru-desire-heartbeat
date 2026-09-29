@@ -19,6 +19,21 @@ The optional Solo Session layer separates autonomous selection from preparation,
 structured action beats, edge, release/no-release completion, and downstream
 settlement. It is also disabled by default. See `SOLO_SESSION_DESIGN.md`.
 
+## 0.9.13
+
+Version 0.9.13 minimizes the external-trigger event to routing identity,
+triggering drive and intent, and fixed non-user-authored guidance. It no longer
+includes drive values, decision scores, action details, or thought records.
+
+Activation now has a root-only, strictly read-only `--preflight` mode. It emits
+only fixed statuses and category counts, stops immediately when a pending
+decision exists, compares the installed sender bundle to the existing
+owner-only provisioning bundle without printing either, and reports whether an
+active timer must be quiesced during a later confirmed activation. The apply
+path derives its source checkout from the script location, stops the timer
+before its final pending-decision check, preserves all unrelated feature gates,
+and restores the timer's prior enabled/active state on failure.
+
 ## 0.9.12
 
 Version 0.9.12 binds the privacy-safe root auditor to the exact rollback backup
@@ -272,8 +287,9 @@ Aru's external-trigger path. The prepared ten-minute timer invokes this command.
 
 The adapter turns one pending desire decision into a bounded
 `xinchao.desire-external-event.v1` background event. The event explicitly says
-that it is not user-authored and carries the triggering drive, score,
-`wantAction`, all drive values, and up to eight related thoughts. Aru is expected
+that it is not user-authored and carries only the decision identity, triggering
+drive and intent, plus fixed guidance. It carries no drive values, score,
+`wantAction`, or thought records. Aru is expected
 to route it as an automatic trigger into the latest conversation, where the
 collaborator reads Aru memory and decides how to respond.
 
@@ -341,11 +357,16 @@ place, atomically updates the disabled systemd units, verifies state, credential
 and unit files, and prints the exact backup-specific rollback command. It never
 enables the timer or delivery.
 
-After the upgraded source and installed versions match,
-`scripts/enable-autonomy-once.sh --apply` validates the private sender credential
-without printing it, verifies both Aru Host manifests, backs up configuration and
-state, rebases the heartbeat clock without growth, opens all three delivery gates,
-and enables the timer. Any failure returns the system to disabled state.
+After the upgraded source and installed versions match, first run the root-only
+`scripts/enable-autonomy-once.sh --preflight`. It performs no network request or
+write and emits only fixed result labels and counts. A PASS means the current
+snapshot is eligible for a later activation; an active timer is reported as a
+required quiesce step, not changed by preflight. The separately confirmed
+`--apply` validates the private sender credential without printing it, verifies
+both Aru Host manifests, backs up configuration and
+state, rebases the heartbeat clock without growth, opens the two outer delivery
+gates while preserving the already validated adapter gate, and enables the timer.
+Any failure closes delivery and restores the prior timer state.
 `scripts/disable-autonomy-once.sh --apply` stops future cycles and closes delivery
 while preserving evolved state. The enable command also prints an exact rollback
 command that restores the pre-activation state.

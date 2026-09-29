@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.9.13
+
+- Minimize autonomous external-trigger events by omitting all drive values,
+  decision scores, action details, and thought records.
+- Add a root-only, read-only activation preflight with fixed, non-sensitive
+  output; exact silent credential identity comparison; and immediate fail-closed
+  handling of existing pending decisions.
+- Derive the activation source from the invoked checkout, quiesce the timer
+  before the final pending check, preserve unrelated feature gates, and restore
+  the timer's original enabled/active state if a later confirmed apply fails.
+
 ## 0.9.12
 
 - Select the only rollback backup explicitly bound by current deployment

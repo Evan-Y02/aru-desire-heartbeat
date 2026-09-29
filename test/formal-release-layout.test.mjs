@@ -18,7 +18,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PACKAGE_VERSION = JSON.parse(
   await readFile(path.join(ROOT, 'package.json'), 'utf8'),
 ).version;
-assert.equal(PACKAGE_VERSION, '0.9.12');
+assert.equal(PACKAGE_VERSION, '0.9.13');
 const directories = [];
 test.after(async () => Promise.all(directories.map((directory) =>
   rm(directory, { recursive: true, force: true }))));

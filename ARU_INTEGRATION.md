@@ -91,8 +91,9 @@ The disabled-by-default autonomous cycle now:
 - converts a pending decision into
   `xinchao.desire-external-event.v1`;
 - marks the event `userAuthored: false` and `purpose: automatic_trigger`;
-- includes the triggering decision, all drive values, and up to eight related
-  thoughts;
+- includes only the decision identity, triggering drive and intent, and fixed
+  non-user-authored guidance; it omits drive values, scores, action details,
+  and thought records;
 - requires an exact enable file and an owner-only send-credential file;
 - writes a per-decision claim before submission;
 - never automatically retries accepted or ambiguous attempts;
