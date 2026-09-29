@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile,
+  chmod, mkdir, mkdtemp, readFile, rm, stat, utimes, writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -18,7 +18,8 @@ import {
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const directories = [];
-const installedAt = '2026-09-28T22:30:43Z';
+const installedAt = '2026-09-29T03:50:12Z';
+const historicalInstalledAt = '2026-09-28T22:30:43Z';
 const flags = {
   observeOnly: true,
   deliveryEnabled: false,
@@ -44,8 +45,12 @@ async function fixture() {
   const gid = process.getgid();
   const heartbeatRoot = path.join(root, 'heartbeat');
   const dataRoot = path.join(root, 'data');
-  const backupRoot = path.join(root, 'backups', '20260928T223043Z');
+  const backupRootParent = path.join(root, 'backups');
+  const backupRoot = path.join(backupRootParent, '20260929T035012Z');
   const previousRelease = path.join(root, 'releases', 'previous');
+  const expectedCurrent = path.join(
+    root, 'releases', 'v0.30.2-pairing-hotfix1-turn-hook-20260929T035012Z',
+  );
   const aruData = path.join(root, 'aru-data');
   await Promise.all([
     mkdir(heartbeatRoot, { recursive: true, mode: 0o755 }),
@@ -62,12 +67,12 @@ async function fixture() {
 
   const metadata = {
     schema: 'aru.desire-heartbeat.deployment.v1',
-    expectedCurrent: path.join(root, 'releases', 'current'),
+    expectedCurrent,
     previousRelease,
     backupRoot,
     installedAt,
   };
-  const packageBytes = Buffer.from('{"version":"0.9.10"}\n');
+  const packageBytes = Buffer.from('{"version":"0.9.12"}\n');
   const oldEntry = {
     path: 'package.json',
     size: packageBytes.length,
@@ -82,7 +87,7 @@ async function fixture() {
   combined.update('\0');
   const manifest = {
     schema: 'aru.desire-heartbeat.file-manifest.v1',
-    version: '0.9.10',
+    version: '0.9.12',
     source: 'recursive-runtime-closure',
     fileCount: 1,
     digest: combined.digest('hex'),
@@ -104,6 +109,7 @@ async function fixture() {
   const paths = {
     deploymentMetadataPath: path.join(heartbeatRoot, 'deployment-metadata.json'),
     releaseManifestPath: path.join(heartbeatRoot, 'release-manifest.json'),
+    packagePath: path.join(heartbeatRoot, 'package.json'),
     configPath: path.join(heartbeatRoot, 'config', 'default.json'),
     statePath: path.join(dataRoot, 'state.json'),
     interactionStatePath: path.join(dataRoot, 'interaction-state.json'),
@@ -113,6 +119,7 @@ async function fixture() {
   await Promise.all([
     file(paths.deploymentMetadataPath, metadataBytes, 0o644),
     file(paths.releaseManifestPath, manifestBytes, 0o644),
+    file(paths.packagePath, packageBytes, 0o644),
     file(paths.configPath, `${JSON.stringify(flags)}\n`, 0o644),
     file(paths.statePath, `${JSON.stringify(state)}\n`, 0o600),
     file(paths.interactionStatePath, `${JSON.stringify(interaction)}\n`, 0o600),
@@ -135,8 +142,8 @@ async function fixture() {
   ]);
 
   const options = {
-    expectedBackupRoot: backupRoot,
-    expectedInstalledAt: installedAt,
+    backupRootParent,
+    releaseRootPrefix: path.join(root, 'releases'),
     heartbeatRoot,
     dataRoot,
     aruDataRoot: aruData,
@@ -148,7 +155,38 @@ async function fixture() {
     readJournal: async () => [],
   };
   options.protectedSnapshotPaths = Object.values(paths);
-  return { root, backupRoot, paths, options, state, interaction };
+  return {
+    root, backupRootParent, backupRoot, previousRelease, paths, options,
+    state, interaction, metadata, metadataBytes,
+  };
+}
+
+async function historicalBackup(f, {
+  duplicateBinding = false,
+  futureMtime = false,
+} = {}) {
+  const stamp = duplicateBinding ? '20260930T000000Z' : '20260928T223043Z';
+  const backup = path.join(f.backupRootParent, stamp);
+  await mkdir(backup, { recursive: true, mode: 0o700 });
+  await chmod(backup, 0o700);
+  const metadata = duplicateBinding ? f.metadata : {
+    ...f.metadata,
+    backupRoot: backup,
+    installedAt: historicalInstalledAt,
+    expectedCurrent: path.join(
+      f.root, 'releases', 'v0.30.2-pairing-hotfix1-turn-hook-20260928T223043Z',
+    ),
+  };
+  await file(
+    path.join(backup, 'deployment-metadata.new.json'),
+    `${JSON.stringify(metadata)}\n`,
+    0o600,
+  );
+  if (futureMtime) {
+    const future = new Date('2035-01-01T00:00:00Z');
+    await utimes(backup, future, future);
+  }
+  return backup;
 }
 
 async function fingerprints(root) {
@@ -172,6 +210,7 @@ test('normal fixture passes provable checks and preserves the honest limitation'
 }, async () => {
   const f = await fixture();
   const report = await runPrivacySafeAudit(f.options);
+  assert.equal(report.installationBinding, STATUS.PASS);
   assert.equal(report.protectedFiles, STATUS.PASS);
   assert.equal(report.backup, STATUS.PASS);
   assert.equal(report.featureGates, STATUS.PASS);
@@ -180,6 +219,117 @@ test('normal fixture passes provable checks and preserves the honest limitation'
   assert.equal(report.journal, STATUS.PASS);
   assert.equal(report.sideEffects, STATUS.PASS);
   assert.equal(report.nonExpectedStateChange, STATUS.INCONCLUSIVE);
+});
+
+test('current metadata selects the new backup after consecutive installs', {
+  timeout: 10_000,
+}, async () => {
+  const f = await fixture();
+  await historicalBackup(f, { futureMtime: true });
+  const report = await runPrivacySafeAudit(f.options);
+  assert.equal(report.installationBinding, STATUS.PASS);
+  assert.equal(report.backup, STATUS.PASS);
+  assert.equal(report.auditErrorCounts.structure_error, 0);
+});
+
+test('missing metadata-bound backup fails closed with one classified error', {
+  timeout: 10_000,
+}, async () => {
+  const f = await fixture();
+  await rm(f.backupRoot, { recursive: true, force: true });
+  const report = await runPrivacySafeAudit(f.options);
+  assert.equal(report.installationBinding, STATUS.FAIL);
+  assert.equal(report.auditErrorCounts.backup_missing_error, 1);
+  assert.equal(report.auditErrorCounts.structure_error, 1);
+});
+
+test('malformed deployment metadata fails closed without double counting', {
+  timeout: 10_000,
+}, async () => {
+  const f = await fixture();
+  await writeFile(f.paths.deploymentMetadataPath, '{malformed', { mode: 0o644 });
+  const report = await runPrivacySafeAudit(f.options);
+  assert.equal(report.installationBinding, STATUS.FAIL);
+  assert.equal(report.auditErrorCounts.metadata_shape_error, 1);
+  assert.equal(report.auditErrorCounts.structure_error, 1);
+  assert.equal(Object.values(report.auditErrorCounts).reduce((sum, value) => sum + value, 0), 2);
+});
+
+test('duplicate exact metadata binding fails closed as ambiguous', {
+  timeout: 10_000,
+}, async () => {
+  const f = await fixture();
+  await historicalBackup(f, { duplicateBinding: true });
+  const report = await runPrivacySafeAudit(f.options);
+  assert.equal(report.installationBinding, STATUS.FAIL);
+  assert.equal(report.auditErrorCounts.binding_ambiguity_error, 1);
+  assert.equal(report.auditErrorCounts.structure_error, 1);
+});
+
+test('metadata time and release identity must bind to the selected backup', {
+  timeout: 10_000,
+}, async () => {
+  const f = await fixture();
+  const mismatched = { ...f.metadata, installedAt: historicalInstalledAt };
+  await writeFile(
+    f.paths.deploymentMetadataPath, `${JSON.stringify(mismatched)}\n`, { mode: 0o644 },
+  );
+  const report = await runPrivacySafeAudit(f.options);
+  assert.equal(report.installationBinding, STATUS.FAIL);
+  assert.equal(report.auditErrorCounts.backup_binding_error, 1);
+  assert.equal(report.auditErrorCounts.structure_error, 1);
+});
+
+test('package and current manifest version mismatch fails closed', {
+  timeout: 10_000,
+}, async () => {
+  const f = await fixture();
+  await writeFile(f.paths.packagePath, '{"version":"0.9.11"}\n', { mode: 0o644 });
+  const report = await runPrivacySafeAudit(f.options);
+  assert.equal(report.installationBinding, STATUS.FAIL);
+  assert.equal(report.auditErrorCounts.manifest_binding_error, 1);
+  assert.equal(report.auditErrorCounts.structure_error, 1);
+});
+
+test('current package bytes must match the package entry in the manifest', {
+  timeout: 10_000,
+}, async () => {
+  const f = await fixture();
+  await writeFile(f.paths.packagePath, '{ "version": "0.9.12" }\n', { mode: 0o644 });
+  const report = await runPrivacySafeAudit(f.options);
+  assert.equal(report.installationBinding, STATUS.FAIL);
+  assert.equal(report.auditErrorCounts.manifest_binding_error, 1);
+  assert.equal(report.auditErrorCounts.structure_error, 1);
+});
+
+test('backup metadata must point back byte-for-byte to current metadata', {
+  timeout: 10_000,
+}, async () => {
+  const f = await fixture();
+  await writeFile(
+    path.join(f.backupRoot, 'deployment-metadata.new.json'),
+    `${JSON.stringify({ ...f.metadata, previousRelease: `${f.previousRelease}-other` })}\n`,
+    { mode: 0o600 },
+  );
+  const report = await runPrivacySafeAudit(f.options);
+  assert.equal(report.installationBinding, STATUS.FAIL);
+  assert.equal(report.auditErrorCounts.backup_binding_error, 1);
+  assert.equal(report.auditErrorCounts.structure_error, 1);
+});
+
+test('backup manifest must match the current version and complete manifest', {
+  timeout: 10_000,
+}, async () => {
+  const f = await fixture();
+  await writeFile(
+    path.join(f.backupRoot, 'runtime-release-manifest.new.json'),
+    '{"version":"0.9.11"}\n',
+    { mode: 0o600 },
+  );
+  const report = await runPrivacySafeAudit(f.options);
+  assert.equal(report.backup, STATUS.FAIL);
+  assert.equal(report.auditErrorCounts.manifest_binding_error, 1);
+  assert.equal(report.auditErrorCounts.structure_error, 1);
 });
 
 test('synthetic pollution is counted without returning identifiers', () => {

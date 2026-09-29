@@ -68,6 +68,129 @@ function parseJson(bytes) {
   return JSON.parse(bytes.toString('utf8'));
 }
 
+function auditIssue(category) {
+  const error = new Error('classified audit failure');
+  error.auditCategory = category;
+  return error;
+}
+
+function parseDeploymentBinding(bytes, options) {
+  let metadata;
+  try {
+    metadata = parseJson(bytes);
+  } catch {
+    throw auditIssue('metadata_shape_error');
+  }
+  if (metadata === null || typeof metadata !== 'object' || Array.isArray(metadata) ||
+      Object.keys(metadata).sort().join(',') !==
+        'backupRoot,expectedCurrent,installedAt,previousRelease,schema' ||
+      metadata.schema !== 'aru.desire-heartbeat.deployment.v1' ||
+      typeof metadata.backupRoot !== 'string' ||
+      typeof metadata.expectedCurrent !== 'string' ||
+      typeof metadata.previousRelease !== 'string' ||
+      typeof metadata.installedAt !== 'string' ||
+      !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/u.test(metadata.installedAt) ||
+      !Number.isFinite(Date.parse(metadata.installedAt))) {
+    throw auditIssue('metadata_shape_error');
+  }
+  const backupParent = path.resolve(options.backupRootParent);
+  const releasePrefix = `${path.resolve(options.releaseRootPrefix)}${path.sep}`;
+  const stamp = metadata.installedAt.replace(/[-:]/gu, '');
+  if (path.normalize(metadata.backupRoot) !== metadata.backupRoot ||
+      path.dirname(metadata.backupRoot) !== backupParent ||
+      path.basename(metadata.backupRoot) !== stamp ||
+      path.normalize(metadata.expectedCurrent) !== metadata.expectedCurrent ||
+      !metadata.expectedCurrent.startsWith(releasePrefix) ||
+      !path.basename(metadata.expectedCurrent).endsWith(`-${stamp}`) ||
+      path.normalize(metadata.previousRelease) !== metadata.previousRelease ||
+      !metadata.previousRelease.startsWith(releasePrefix) ||
+      metadata.previousRelease === metadata.expectedCurrent) {
+    throw auditIssue('backup_binding_error');
+  }
+  return metadata;
+}
+
+function validateCurrentManifest(manifest, packageMetadata, packageBytes) {
+  if (manifest === null || typeof manifest !== 'object' || Array.isArray(manifest) ||
+      manifest.schema !== 'aru.desire-heartbeat.file-manifest.v1' ||
+      manifest.source !== 'recursive-runtime-closure' ||
+      typeof manifest.version !== 'string' || !/^\d+\.\d+\.\d+$/u.test(manifest.version) ||
+      !Number.isSafeInteger(manifest.fileCount) || manifest.fileCount < 1 ||
+      !Array.isArray(manifest.files) || manifest.files.length !== manifest.fileCount ||
+      typeof manifest.digest !== 'string' || !/^[a-f0-9]{64}$/u.test(manifest.digest) ||
+      packageMetadata === null || typeof packageMetadata !== 'object' ||
+      packageMetadata.version !== manifest.version) {
+    throw auditIssue('manifest_binding_error');
+  }
+  let previous = null;
+  for (const entry of manifest.files) {
+    if (entry === null || typeof entry !== 'object' || Array.isArray(entry) ||
+        Object.keys(entry).sort().join(',') !== 'path,sha256,size' ||
+        typeof entry.path !== 'string' || entry.path.length === 0 ||
+        path.isAbsolute(entry.path) || entry.path.split('/').includes('..') ||
+        !Number.isSafeInteger(entry.size) || entry.size < 0 ||
+        typeof entry.sha256 !== 'string' || !/^[a-f0-9]{64}$/u.test(entry.sha256) ||
+        (previous !== null && previous.localeCompare(entry.path) >= 0)) {
+      throw auditIssue('manifest_binding_error');
+    }
+    previous = entry.path;
+  }
+  if (combinedDigest(manifest.files) !== manifest.digest) {
+    throw auditIssue('manifest_binding_error');
+  }
+  const packageEntry = manifest.files.find((entry) => entry.path === 'package.json');
+  if (!packageEntry || packageEntry.size !== packageBytes.length ||
+      packageEntry.sha256 !== sha256(packageBytes)) {
+    throw auditIssue('manifest_binding_error');
+  }
+}
+
+async function verifyUniqueBackupBinding(options, metadata, metadataBytes, accounts) {
+  let targetInfo;
+  try {
+    targetInfo = await lstat(metadata.backupRoot);
+  } catch (error) {
+    if (error?.code === 'ENOENT') throw auditIssue('backup_missing_error');
+    throw error;
+  }
+  if (!targetInfo.isDirectory() || targetInfo.isSymbolicLink()) {
+    throw auditIssue('backup_binding_error');
+  }
+  let targetMetadata;
+  try {
+    targetMetadata = await safeFile(
+      path.join(metadata.backupRoot, 'deployment-metadata.new.json'),
+      { ...accounts.root, mode: 0o600 },
+    );
+  } catch (error) {
+    if (error?.code === 'ENOENT') throw auditIssue('backup_binding_error');
+    throw error;
+  }
+  if (!targetMetadata.bytes.equals(metadataBytes)) throw auditIssue('backup_binding_error');
+
+  let exactBindings = 0;
+  for (const name of await readdir(options.backupRootParent)) {
+    if (!/^\d{8}T\d{6}Z$/u.test(name)) continue;
+    const candidateRoot = path.join(options.backupRootParent, name);
+    let rootInfo;
+    try {
+      rootInfo = await lstat(candidateRoot);
+    } catch {
+      continue;
+    }
+    if (!rootInfo.isDirectory() || rootInfo.isSymbolicLink()) continue;
+    try {
+      const candidate = await safeFile(
+        path.join(candidateRoot, 'deployment-metadata.new.json'), {},
+      );
+      if (candidate.bytes.equals(metadataBytes)) exactBindings += 1;
+    } catch (error) {
+      if (error?.code !== 'ENOENT' && candidateRoot === metadata.backupRoot) throw error;
+    }
+  }
+  if (exactBindings !== 1) throw auditIssue('binding_ambiguity_error');
+}
+
 function duplicateCount(values) {
   return values.length - new Set(values).size;
 }
@@ -193,9 +316,8 @@ function sameSnapshot(left, right) {
 }
 
 async function auditBackup(options, metadata, manifest, accounts) {
-  const root = options.expectedBackupRoot;
+  const root = metadata.backupRoot;
   const rootAccount = accounts.root;
-  if (metadata.backupRoot !== root) throw new Error('backup binding mismatch');
   const expectedStamp = metadata.installedAt.replace(/[-:]/gu, '').replace('.000Z', 'Z');
   if (path.basename(root) !== expectedStamp) throw new Error('backup timestamp mismatch');
 
@@ -253,9 +375,11 @@ async function auditBackup(options, metadata, manifest, accounts) {
   const productionManifest = await safeFile(options.releaseManifestPath, {
     ...rootAccount, mode: 0o644,
   });
-  if (!deployment.bytes.equals(productionMetadata.bytes) ||
-      !runtimeManifest.bytes.equals(productionManifest.bytes)) {
-    throw new Error('generated backup artifacts mismatch');
+  if (!deployment.bytes.equals(productionMetadata.bytes)) {
+    throw auditIssue('backup_binding_error');
+  }
+  if (!runtimeManifest.bytes.equals(productionManifest.bytes)) {
+    throw auditIssue('manifest_binding_error');
   }
 
   const expectedDesire = new Set([
@@ -298,7 +422,7 @@ async function auditBackup(options, metadata, manifest, accounts) {
       typeof oldManifest.digest !== 'string' || combinedDigest(oldManifest.files) !== oldManifest.digest ||
       JSON.stringify(oldManifest.files.map((item) => item.path)) !==
         JSON.stringify(manifest.files.map((item) => item.path))) {
-    throw new Error('backup runtime manifest invalid');
+    throw auditIssue('manifest_binding_error');
   }
   for (const item of oldManifest.files) {
     const backedUp = await safeFile(path.join(root, 'desire', item.path), {
@@ -306,7 +430,7 @@ async function auditBackup(options, metadata, manifest, accounts) {
       mode: item.path.startsWith('bin/') || item.path.startsWith('scripts/') ? 0o755 : 0o644,
     });
     if (backedUp.info.size !== item.size || sha256(backedUp.bytes) !== item.sha256) {
-      throw new Error('backup runtime hash mismatch');
+      throw auditIssue('manifest_binding_error');
     }
   }
 
@@ -355,6 +479,7 @@ function mergeCounts(target, source) {
 
 export async function runPrivacySafeAudit(options) {
   const report = {
+    installationBinding: STATUS.INCONCLUSIVE,
     protectedFiles: STATUS.INCONCLUSIVE,
     backup: STATUS.INCONCLUSIVE,
     featureGates: STATUS.INCONCLUSIVE,
@@ -366,26 +491,48 @@ export async function runPrivacySafeAudit(options) {
     syntheticCount: 0,
     duplicateCount: 0,
     journalCounts: blankJournalCounts(),
-    auditErrorCounts: { permission_error: 0, structure_error: 0, journal_access_error: 0 },
+    auditErrorCounts: {
+      permission_error: 0,
+      structure_error: 0,
+      journal_access_error: 0,
+      metadata_shape_error: 0,
+      backup_binding_error: 0,
+      backup_missing_error: 0,
+      binding_ambiguity_error: 0,
+      manifest_binding_error: 0,
+    },
   };
   let before = null;
-  let stage = 'snapshot';
+  let metadata = null;
+  let stage = 'binding';
   try {
-    before = {
-      protected: await protectedSnapshot(options.protectedSnapshotPaths),
-      backup: await recursiveSnapshot(options.expectedBackupRoot),
-    };
-    stage = 'metadata';
     const metadataFile = await safeFile(options.deploymentMetadataPath, {
       ...options.accounts.root, mode: 0o644,
     });
-    const metadata = parseJson(metadataFile.bytes);
-    if (metadata.backupRoot !== options.expectedBackupRoot ||
-        metadata.installedAt !== options.expectedInstalledAt) throw new Error('metadata mismatch');
-    const manifest = parseJson((await safeFile(options.releaseManifestPath, {
-      ...options.accounts.root, mode: 0o644,
-    })).bytes);
+    metadata = parseDeploymentBinding(metadataFile.bytes, options);
+    let manifest;
+    let packageMetadata;
+    let packageBytes;
+    try {
+      manifest = parseJson((await safeFile(options.releaseManifestPath, {
+        ...options.accounts.root, mode: 0o644,
+      })).bytes);
+      packageBytes = (await safeFile(options.packagePath, {
+        ...options.accounts.root, mode: 0o644,
+      })).bytes;
+      packageMetadata = parseJson(packageBytes);
+    } catch {
+      throw auditIssue('manifest_binding_error');
+    }
+    validateCurrentManifest(manifest, packageMetadata, packageBytes);
+    await verifyUniqueBackupBinding(options, metadata, metadataFile.bytes, options.accounts);
+    report.installationBinding = STATUS.PASS;
 
+    stage = 'snapshot';
+    before = {
+      protected: await protectedSnapshot(options.protectedSnapshotPaths),
+      backup: await recursiveSnapshot(metadata.backupRoot),
+    };
     stage = 'protected';
     await safeDirectory(options.aruDataRoot, {
       uid: options.accounts.aru.uid, gid: options.accounts.aru.gid, mode: 0o700,
@@ -440,8 +587,12 @@ export async function runPrivacySafeAudit(options) {
       report.auditErrorCounts.journal_access_error += 1;
     } else {
       report.auditErrorCounts.structure_error += 1;
+      if (Object.hasOwn(report.auditErrorCounts, error?.auditCategory)) {
+        report.auditErrorCounts[error.auditCategory] += 1;
+      }
     }
-    if (stage === 'metadata' || stage === 'protected') report.protectedFiles = STATUS.FAIL;
+    if (stage === 'binding') report.installationBinding = STATUS.FAIL;
+    if (stage === 'snapshot' || stage === 'protected') report.protectedFiles = STATUS.FAIL;
     if (stage === 'backup') report.backup = STATUS.FAIL;
     if (stage === 'feature') report.featureGates = STATUS.FAIL;
   } finally {
@@ -449,7 +600,7 @@ export async function runPrivacySafeAudit(options) {
       try {
         const after = {
           protected: await protectedSnapshot(options.protectedSnapshotPaths),
-          backup: await recursiveSnapshot(options.expectedBackupRoot),
+          backup: await recursiveSnapshot(metadata.backupRoot),
         };
         report.sideEffects = sameSnapshot(before, after) ? STATUS.PASS : STATUS.INCONCLUSIVE;
       } catch (error) {
@@ -466,13 +617,14 @@ export async function runPrivacySafeAudit(options) {
 
 export function renderPrivacySafeReport(report) {
   const statuses = [
-    report.protectedFiles, report.backup, report.featureGates, report.synthetic,
+    report.installationBinding, report.protectedFiles, report.backup, report.featureGates, report.synthetic,
     report.duplicateLedgers, report.nonExpectedStateChange, report.journal, report.sideEffects,
   ];
   const overall = statuses.includes(STATUS.FAIL)
     ? STATUS.FAIL : statuses.includes(STATUS.INCONCLUSIVE) ? STATUS.INCONCLUSIVE : STATUS.PASS;
   const lines = [
     `PRIVACY_SAFE_ROOT_AUDIT=${overall}`,
+    `INSTALLATION_BINDING=${report.installationBinding}`,
     `PROTECTED_FILES=${report.protectedFiles}`,
     `ROLLBACK_BACKUP=${report.backup}`,
     `FEATURE_GATES=${report.featureGates}`,

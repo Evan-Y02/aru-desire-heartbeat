@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.9.12
+
+- Select the only rollback backup explicitly bound by current deployment
+  metadata instead of embedding a previous installation timestamp.
+- Fail closed on malformed metadata, a missing target, inconsistent
+  release/time/version/manifest relationships, or duplicate exact bindings.
+- Add fixed privacy-safe binding error counts and ensure each underlying
+  failure increments the aggregate structure error only once.
+- Add consecutive-install fixtures proving that historical backup names and
+  mtimes never participate in current-backup selection.
+
 ## 0.9.11
 
 - Add a root-only, strictly read-only production delta auditor whose output is

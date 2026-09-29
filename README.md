@@ -19,6 +19,15 @@ The optional Solo Session layer separates autonomous selection from preparation,
 structured action beats, edge, release/no-release completion, and downstream
 settlement. It is also disabled by default. See `SOLO_SESSION_DESIGN.md`.
 
+## 0.9.12
+
+Version 0.9.12 binds the privacy-safe root auditor to the exact rollback backup
+named by current deployment metadata. It validates the installation timestamp,
+release identity, package and manifest version, copied metadata and manifests,
+and uniqueness of that exact binding. Historical backup ordering and mtimes are
+never used for selection. Binding failures remain fail-closed and expose only
+fixed categories and counts.
+
 ## 0.9.11
 
 Version 0.9.11 adds a root-only, strictly read-only delta auditor for protected

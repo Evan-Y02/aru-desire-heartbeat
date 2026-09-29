@@ -7,13 +7,12 @@ import {
   renderPrivacySafeReport, runPrivacySafeAudit, STATUS,
 } from './privacy-safe-root-audit-core.mjs';
 
-const EXPECTED_BACKUP = '/var/backups/aru-desire-turn-hook/20260928T223043Z';
-const EXPECTED_INSTALLED_AT = '2026-09-28T22:30:43Z';
 const HEARTBEAT_ROOT = '/opt/aru-desire-heartbeat';
 const DATA_ROOT = '/var/lib/aru-desire-heartbeat';
 
 function blockedReport(kind) {
   return {
+    installationBinding: STATUS.INCONCLUSIVE,
     protectedFiles: STATUS.INCONCLUSIVE,
     backup: STATUS.INCONCLUSIVE,
     featureGates: STATUS.INCONCLUSIVE,
@@ -32,6 +31,11 @@ function blockedReport(kind) {
       permission_error: kind === 'permission' ? 1 : 0,
       structure_error: kind === 'structure' ? 1 : 0,
       journal_access_error: 0,
+      metadata_shape_error: 0,
+      backup_binding_error: 0,
+      backup_missing_error: 0,
+      binding_ambiguity_error: 0,
+      manifest_binding_error: 0,
     },
   };
 }
@@ -90,13 +94,14 @@ if (process.getuid?.() !== 0) {
       import(pathToFileURL(path.join(HEARTBEAT_ROOT, 'src', 'interaction-runtime.mjs'))),
     ]);
     const options = {
-      expectedBackupRoot: EXPECTED_BACKUP,
-      expectedInstalledAt: EXPECTED_INSTALLED_AT,
+      backupRootParent: '/var/backups/aru-desire-turn-hook',
+      releaseRootPrefix: '/opt/aru-selfhost/releases',
       heartbeatRoot: HEARTBEAT_ROOT,
       dataRoot: DATA_ROOT,
       aruDataRoot: '/var/lib/aru-selfhost',
       deploymentMetadataPath: path.join(HEARTBEAT_ROOT, 'deployment-metadata.json'),
       releaseManifestPath: path.join(HEARTBEAT_ROOT, 'release-manifest.json'),
+      packagePath: path.join(HEARTBEAT_ROOT, 'package.json'),
       configPath: path.join(HEARTBEAT_ROOT, 'config', 'default.json'),
       statePath: path.join(DATA_ROOT, 'state.json'),
       interactionStatePath: path.join(DATA_ROOT, 'interaction-state.json'),
@@ -120,6 +125,7 @@ if (process.getuid?.() !== 0) {
     options.protectedSnapshotPaths = [
       options.deploymentMetadataPath,
       options.releaseManifestPath,
+      options.packagePath,
       options.configPath,
       options.statePath,
       options.interactionStatePath,

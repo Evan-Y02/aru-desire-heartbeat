@@ -1,5 +1,18 @@
 # Release inventory
 
+## 0.9.12
+
+The v0.9.12 source removes the v0.9.11 auditor's installation-specific backup
+constants. The current deployment metadata is the sole authority for backup
+selection, with bidirectional timestamp, release, package-version, metadata,
+manifest, and uniqueness validation. Multiple historical backups and their
+mtimes cannot affect selection.
+
+The v0.9.11 tag and all earlier tags remain immutable. Runtime behavior is
+unchanged except for the package semantic version carried by generated
+manifests; this release changes only audit selection, reporting, fixtures, and
+release documentation.
+
 ## 0.9.11
 
 The v0.9.11 source adds a privacy-safe, root-only, read-only delta auditor and
