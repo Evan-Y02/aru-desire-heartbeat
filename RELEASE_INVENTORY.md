@@ -1,5 +1,16 @@
 # Release inventory
 
+## 0.9.11
+
+The v0.9.11 source adds a privacy-safe, root-only, read-only delta auditor and
+isolated regression fixtures. The auditor never prints protected contents,
+identifiers, hashes, configuration values, URLs, credentials, or journal text;
+it emits only fixed result labels, PASS/FAIL/INCONCLUSIVE, and counts.
+
+The v0.9.10 tag and commit remain immutable. The heartbeat and receiver runtime
+behavior is unchanged except for the package semantic version carried by the
+formal runtime manifest.
+
 ## 0.9.10
 
 The v0.9.10 source release contains the same 31-file recursive heartbeat and

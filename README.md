@@ -19,6 +19,18 @@ The optional Solo Session layer separates autonomous selection from preparation,
 structured action beats, edge, release/no-release completion, and downstream
 settlement. It is also disabled by default. See `SOLO_SESSION_DESIGN.md`.
 
+## 0.9.11
+
+Version 0.9.11 adds a root-only, strictly read-only delta auditor for protected
+production state, rollback structure, feature-gate equality, synthetic-event
+candidates, duplicate ledgers, and post-install journal error categories. Its
+output is limited to fixed PASS/FAIL/INCONCLUSIVE fields and counts; it never
+prints protected values, identifiers, hashes, URLs, credentials, or log text.
+
+Because v0.9.10 deliberately took no production-state snapshot, the auditor
+marks arbitrary non-test state-change detection INCONCLUSIVE instead of treating
+whole-file equality as a requirement or inventing a PASS.
+
 ## 0.9.10
 
 Version 0.9.10 makes installation acceptance completely independent of live

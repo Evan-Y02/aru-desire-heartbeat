@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.9.11
+
+- Add a root-only, strictly read-only production delta auditor whose output is
+  limited to PASS/FAIL/INCONCLUSIVE, fixed error categories, and counts.
+- Verify protected file metadata, rollback structure and installation binding,
+  feature-gate equality, synthetic-event candidates, duplicate ledgers, and
+  post-install journal error counts without printing private values or bodies.
+- Keep arbitrary post-install state-change detection explicitly inconclusive
+  because v0.9.10 intentionally created no production state snapshot.
+- Add isolated fixtures for clean, polluted, duplicate, permission-failure,
+  damaged-backup, journal-classification, redaction, and side-effect behavior.
+
 ## 0.9.10
 
 - Move installation receive/replay acceptance into a fresh temporary config,
