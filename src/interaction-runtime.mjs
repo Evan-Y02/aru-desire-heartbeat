@@ -20,6 +20,23 @@ import { clamp, timePair } from './engine.mjs';
 
 export const INTERACTION_STATE_SCHEMA = 'aru.desire-heartbeat.interaction-state.v1';
 
+function settlementResult({
+  libidoBefore, libidoAfter, arousalBefore, arousalAfter,
+  refractoryUntil, cooldownUntil, duplicateIgnored = false,
+}) {
+  return {
+    libidoBefore,
+    libidoAfter,
+    arousalBefore,
+    arousalAfter,
+    refractoryUntil: refractoryUntil === null ? null : structuredClone(refractoryUntil),
+    cooldownUntil: cooldownUntil === null ? null : structuredClone(cooldownUntil),
+    receiptStatus: 'settled',
+    settled: true,
+    duplicateIgnored,
+  };
+}
+
 export function createInteractionState(epochMs = Date.now()) {
   return {
     schema: INTERACTION_STATE_SCHEMA,
@@ -128,6 +145,8 @@ export function settlePendingClassifiedSettlement({ desireState, interactionStat
   const desire = structuredClone(desireState);
   const ledger = Array.isArray(desire.appliedEffectIds) ? desire.appliedEffectIds : [];
   const alreadyApplied = ledger.includes(receipt.effectId);
+  const libidoBefore = alreadyApplied ? null : desire.drives.libido;
+  const arousalBefore = nextInteraction.arousal.value;
   const prior = nextInteraction.chat.settlementFacts.find((item) =>
     item.factFingerprint === receipt.factFingerprint);
   if (!alreadyApplied) {
@@ -192,11 +211,21 @@ export function settlePendingClassifiedSettlement({ desireState, interactionStat
       effectId: receipt.effectId,
       eventIds: [receipt.eventId],
       at: structuredClone(receipt.at),
+      result: null,
     });
     nextInteraction.chat.settlementFacts = nextInteraction.chat.settlementFacts.slice(
       -config.chatStimulus.ledgerMaxCount,
     );
   }
+  const recorded = prior ?? nextInteraction.chat.settlementFacts.at(-1);
+  recorded.result = settlementResult({
+    libidoBefore,
+    libidoAfter: alreadyApplied ? null : desire.drives.libido,
+    arousalBefore,
+    arousalAfter: nextInteraction.arousal.value,
+    refractoryUntil: nextInteraction.arousal.refractoryUntil,
+    cooldownUntil: receipt.type === 'solo_release' ? desire.solo.refractoryUntil : null,
+  });
   nextInteraction.chat.pendingSettlementReceipt = null;
   return { desireState: desire, interactionState: nextInteraction, applied: !alreadyApplied };
 }

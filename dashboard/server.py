@@ -37,6 +37,12 @@ INTENT_LABELS = {
     "reach_owner": "想靠近你", "seek_closeness": "想寻求亲近",
     "solo": "想独处消解", "share": "想与你分享", "confide": "想向你倾诉",
 }
+SETTLEMENT_TYPE_LABELS = {
+    "partnered_release": "双方亲密，明确高潮/射精",
+    "partnered_no_release": "双方亲密，未高潮/未射精",
+    "solo_release": "自己解决，明确高潮/射精",
+    "solo_no_release": "自己解决，未高潮/未射精",
+}
 TIMELINE_OUTCOME_LABELS = {
     "idle": "继续积累", "withheld": "暂时没开口",
     "held_disabled": "意图被门禁留住", "submitting": "正在提交",
@@ -96,6 +102,50 @@ def iso(epoch_ms):
 def percentage(value):
     result = round(float(value) * 100, 1)
     return int(result) if result.is_integer() else result
+
+
+def safe_pair(value):
+    if (not isinstance(value, dict) or isinstance(value.get("epochMs"), bool)
+            or not isinstance(value.get("epochMs"), int)
+            or value["epochMs"] < 0 or not isinstance(value.get("iso"), str)):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value["iso"].replace("Z", "+00:00"))
+    except (ValueError, OverflowError, OSError):
+        return None
+    if int(parsed.timestamp() * 1000) != value["epochMs"]:
+        return None
+    return value
+
+
+def safe_unit(value):
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 <= value <= 1:
+        return None
+    return value
+
+
+def settlement_metric(before, after):
+    before = safe_unit(before)
+    after = safe_unit(after)
+    return {
+        "beforePercent": None if before is None else percentage(before),
+        "afterPercent": None if after is None else percentage(after),
+        "changePercent": (
+            None if before is None or after is None else percentage(after - before)
+        ),
+    }
+
+
+def deadline_view(value, now_ms):
+    pair = safe_pair(value)
+    if pair is None:
+        return {"active": False, "until": None, "remainingSeconds": None}
+    remaining = max(0, (pair["epochMs"] - now_ms + 999) // 1000)
+    return {
+        "active": pair["epochMs"] > now_ms,
+        "until": pair["iso"],
+        "remainingSeconds": remaining,
+    }
 
 
 def require_number(value, label):
@@ -175,8 +225,10 @@ def load_snapshot_inputs(config_path, data_directory):
     config = read_json(config_path)
     state = read_json(directory / "state.json", private=True)
     interaction = None
-    if config.get("soloSessionsEnabled") is True:
+    try:
         interaction = read_json(directory / "interaction-state.json", private=True)
+    except FileNotFoundError:
+        pass
     return state, config, interaction
 def validate_inputs(state, config):
     if state.get("schema") != "aru.desire-heartbeat.state.v2":
@@ -407,6 +459,147 @@ def solo_session_view(interaction):
     }
 
 
+def settlement_record(settlement_type, at, result, *, status="unknown", settled=None,
+                      duplicate_ignored=None):
+    if settlement_type not in SETTLEMENT_TYPE_LABELS or safe_pair(at) is None:
+        return None
+    result = result if isinstance(result, dict) else {}
+    result_status = result.get("receiptStatus")
+    if result_status in ("pending", "settled", "unknown"):
+        status = result_status
+    if isinstance(result.get("settled"), bool):
+        settled = result["settled"]
+    if isinstance(result.get("duplicateIgnored"), bool):
+        duplicate_ignored = result["duplicateIgnored"]
+    return {
+        "time": at["iso"],
+        "epochMs": at["epochMs"],
+        "type": settlement_type,
+        "typeLabel": SETTLEMENT_TYPE_LABELS[settlement_type],
+        "libido": settlement_metric(result.get("libidoBefore"), result.get("libidoAfter")),
+        "arousal": settlement_metric(result.get("arousalBefore"), result.get("arousalAfter")),
+        "refractoryUntil": (
+            None if safe_pair(result.get("refractoryUntil")) is None
+            else result["refractoryUntil"]["iso"]
+        ),
+        "cooldownUntil": (
+            None if safe_pair(result.get("cooldownUntil")) is None
+            else result["cooldownUntil"]["iso"]
+        ),
+        "receiptStatus": status,
+        "receiptStatusLabel": {
+            "pending": "待结算", "settled": "已结算", "unknown": "旧记录状态未知",
+        }[status],
+        "settled": settled,
+        "duplicateIgnored": duplicate_ignored,
+    }
+
+
+def solo_settlement_record(session, applied_effect_ids):
+    if not isinstance(session, dict):
+        return None
+    outcome = session.get("outcome")
+    settlement_type = {
+        "completed_release": "solo_release",
+        "completed_no_release": "solo_no_release",
+    }.get(outcome)
+    if settlement_type is None:
+        return None
+    at = safe_pair(session.get("settlementAt"))
+    if at is None:
+        transitions = session.get("transitions")
+        if isinstance(transitions, list):
+            for transition_item in reversed(transitions):
+                if isinstance(transition_item, dict) and transition_item.get("phase") == "settled":
+                    at = safe_pair(transition_item.get("at"))
+                    if at is not None:
+                        break
+    if at is None:
+        return None
+    effect_id = session.get("releaseEffectId")
+    settled = session.get("settled") if isinstance(session.get("settled"), bool) else None
+    status = session.get("receiptStatus")
+    if status not in ("pending", "settled", "unknown"):
+        status = "unknown"
+    if isinstance(effect_id, str) and effect_id in applied_effect_ids:
+        settled, status = True, "settled"
+    result = {
+        "libidoBefore": session.get("libidoBefore"),
+        "libidoAfter": session.get("libidoAfter"),
+        "arousalBefore": session.get("arousalBefore"),
+        "arousalAfter": session.get("arousalAfter"),
+        "refractoryUntil": session.get("refractoryUntil"),
+        "cooldownUntil": session.get("cooldownUntil"),
+        "receiptStatus": status,
+        "settled": settled,
+        "duplicateIgnored": session.get("duplicateIgnored"),
+    }
+    return settlement_record(settlement_type, at, result)
+
+
+def create_settlement_view(state, interaction, now_ms):
+    history = []
+    applied_effect_ids = state.get("appliedEffectIds")
+    applied_effect_ids = set(applied_effect_ids) if isinstance(applied_effect_ids, list) else set()
+    chat = interaction.get("chat") if isinstance(interaction, dict) else None
+    arousal = interaction.get("arousal") if isinstance(interaction, dict) else None
+    chat = chat if isinstance(chat, dict) else {}
+    arousal = arousal if isinstance(arousal, dict) else {}
+    pending = chat.get("pendingSettlementReceipt")
+    pending_fingerprint = pending.get("factFingerprint") if isinstance(pending, dict) else None
+    facts = chat.get("settlementFacts")
+    if isinstance(facts, list):
+        for fact in facts:
+            if not isinstance(fact, dict):
+                continue
+            status, settled = "unknown", None
+            if pending_fingerprint is not None and fact.get("factFingerprint") == pending_fingerprint:
+                status, settled = "pending", False
+            elif isinstance(fact.get("effectId"), str) and fact["effectId"] in applied_effect_ids:
+                status, settled = "settled", True
+            record = settlement_record(
+                fact.get("type"), fact.get("at"), fact.get("result"),
+                status=status, settled=settled,
+            )
+            if record is not None:
+                if pending_fingerprint is not None and fact.get("factFingerprint") == pending_fingerprint:
+                    record.update({
+                        "receiptStatus": "pending", "receiptStatusLabel": "待结算", "settled": False,
+                    })
+                elif isinstance(fact.get("effectId"), str) and fact["effectId"] in applied_effect_ids:
+                    record.update({
+                        "receiptStatus": "settled", "receiptStatusLabel": "已结算", "settled": True,
+                    })
+                history.append(record)
+    store = interaction.get("soloSessions") if isinstance(interaction, dict) else None
+    sessions = store.get("sessions") if isinstance(store, dict) else None
+    if isinstance(sessions, list):
+        for session in sessions:
+            record = solo_settlement_record(session, applied_effect_ids)
+            if record is not None:
+                history.append(record)
+    history.sort(key=lambda item: item["epochMs"], reverse=True)
+    history = history[:10]
+    for record in history:
+        del record["epochMs"]
+    pending_release = arousal.get("pendingReleaseReceipt")
+    receipt_status = "pending" if isinstance(pending, dict) or isinstance(pending_release, dict) else (
+        history[0]["receiptStatus"] if history else "none"
+    )
+    solo = state.get("solo") if isinstance(state.get("solo"), dict) else {}
+    return {
+        "latestAt": history[0]["time"] if history else None,
+        "receiptStatus": receipt_status,
+        "receiptStatusLabel": {
+            "pending": "存在待结算 receipt", "settled": "最近事件已结算",
+            "unknown": "最近旧记录状态未知", "none": "暂无 receipt",
+        }[receipt_status],
+        "refractory": deadline_view(arousal.get("refractoryUntil"), now_ms),
+        "cooldown": deadline_view(solo.get("refractoryUntil"), now_ms),
+        "history": history,
+    }
+
+
 def create_dashboard_snapshot(state, config, now_ms=None, interaction=None):
     drives, thoughts, timeline = validate_inputs(state, config)
     expression_state = state.get("expression") or {"consecutiveWithholds": 0}
@@ -485,6 +678,7 @@ def create_dashboard_snapshot(state, config, now_ms=None, interaction=None):
         "timelineTotal": len(timeline),
         "pendingDecision": pending_view,
         "solo": solo_view,
+        "settlements": create_settlement_view(state, interaction, now_ms),
         "gates": {
             "observeOnly": bool(config.get("observeOnly", True)),
             "deliveryEnabled": bool(config.get("deliveryEnabled", False)),

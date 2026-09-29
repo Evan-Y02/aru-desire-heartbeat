@@ -98,6 +98,13 @@ pulse.example.com {
 Create the hash with `caddy hash-password`. Use a real domain and verify that
 an unauthenticated request receives HTTP 401.
 
+In v0.9.15 the authenticated Dashboard includes the read-only
+“射精与满足结算” module. It projects only allowlisted structured settlement
+fields, keeps missing legacy values as “未知”, and never exposes conversation
+bodies, thoughts, secrets, credentials, tokens, complete private URLs, or raw
+payloads. It does not add a write route or change settlement, delivery, or
+production gates.
+
 ## 7. Enable Aru delivery
 
 Follow `ARU_INTEGRATION.md` first. Once the sender bundle is installed with
@@ -146,11 +153,12 @@ This stops future cycles and closes delivery while preserving evolved state.
 Stop autonomy first, then:
 
 ```bash
-sudo ./scripts/upgrade-once.sh --apply
+sudo ./scripts/install-complete-message-hook-once.sh /absolute/path/to/v0.9.15/source
 ```
 
-The upgrader verifies tests, preserves state and credentials, and leaves the
-timer inactive. Review the printed rollback command before re-enabling.
+The guarded installer verifies tests and the two byte-identical runtime
+manifests, preserves state and credentials, and restores the prior service state
+or rolls back on failure. Review its output before any separate autonomy change.
 
 ## 10. Recovery
 

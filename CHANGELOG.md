@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.9.15
+
+- Add the read-only “射精与满足结算” Dashboard module with Chinese labels for
+  all four settlement scenarios, latest-settlement time, libido/arousal
+  before/after values and deltas, refractory/cooldown state, receipt and
+  deduplication status, a newest-first ten-entry history, and an explicit empty
+  state.
+- Render missing legacy settlement fields as “未知” without inference, and
+  expose only an allowlisted structured projection that excludes conversation
+  bodies, thoughts, secrets, credentials, tokens, complete private URLs, and raw
+  payloads.
+- Preserve all four settlement carryovers, deduplication, autonomous delivery,
+  feature gates, and production behavior; the added persisted fields record the
+  already-computed settlement result for the read-only projection.
+- Carry package version 0.9.15 into both generated, byte-identical runtime
+  manifests and the guarded installation path.
+
 ## 0.9.14
 
 - Remove the pre-quiesce apply-time preflight that allowed an active timer to

@@ -18,6 +18,9 @@ const elements = {
   thoughtList: document.querySelector('#thought-list'),
   timelineCount: document.querySelector('#timeline-count'),
   timelineList: document.querySelector('#timeline-list'),
+  settlementCount: document.querySelector('#settlement-count'),
+  settlementSummary: document.querySelector('#settlement-summary'),
+  settlementHistory: document.querySelector('#settlement-history'),
   runtimeList: document.querySelector('#runtime-list'),
   soloSessionPanel: document.querySelector('#solo-session-panel'),
   soloSessionList: document.querySelector('#solo-session-list'),
@@ -65,6 +68,12 @@ function formatTime(value) {
 
 function formatPercent(value) {
   return Number.isInteger(value) ? value + '%' : value.toFixed(1) + '%';
+}
+
+function formatOptionalPercent(value, signed = false) {
+  if (typeof value !== 'number') return '未知';
+  const prefix = signed && value > 0 ? '+' : '';
+  return prefix + formatPercent(value);
 }
 
 function formatClock(value) {
@@ -255,6 +264,67 @@ function renderSoloSession(session) {
   );
 }
 
+function deadlineLabel(deadline, activeLabel) {
+  if (!deadline || !deadline.until) return '无可靠记录';
+  if (!deadline.active) return '已结束';
+  const remaining = typeof deadline.remainingSeconds === 'number'
+    ? '，剩余约 ' + Math.ceil(deadline.remainingSeconds / 60) + ' 分钟'
+    : '';
+  return activeLabel + '至 ' + formatTime(deadline.until) + remaining;
+}
+
+function metricLabel(metric) {
+  const before = formatOptionalPercent(metric?.beforePercent);
+  const after = formatOptionalPercent(metric?.afterPercent);
+  const change = formatOptionalPercent(metric?.changePercent, true);
+  return '结算前 ' + before + ' · 结算后 ' + after + ' · 实际变化 ' + change;
+}
+
+function renderSettlements(settlements) {
+  const history = settlements?.history ?? [];
+  elements.settlementCount.textContent = history.length + ' 条';
+  elements.settlementSummary.replaceChildren(
+    runtimeRow('最近一次结算', settlements?.latestAt ? formatTime(settlements.latestAt) : '暂无'),
+    runtimeRow('当前 refractory', deadlineLabel(settlements?.refractory, '生效中，')),
+    runtimeRow('当前 cooldown', deadlineLabel(settlements?.cooldown, '生效中，')),
+    runtimeRow('Receipt', settlements?.receiptStatusLabel ?? '暂无 receipt'),
+  );
+  if (history.length === 0) {
+    elements.settlementHistory.replaceChildren(
+      text('p', '暂无射精或满足结算记录', 'empty'),
+    );
+    return;
+  }
+  const fragment = document.createDocumentFragment();
+  for (const entry of history) {
+    const item = document.createElement('article');
+    item.className = 'settlement-entry';
+    const heading = document.createElement('div');
+    heading.className = 'settlement-heading';
+    heading.append(
+      text('strong', entry.typeLabel),
+      text('time', formatTime(entry.time)),
+    );
+    const flags = [
+      entry.receiptStatusLabel,
+      entry.settled === true ? '事件已结算' : entry.settled === false ? '事件未结算' : '结算状态未知',
+      entry.duplicateIgnored === true ? '重复事件已忽略' :
+        entry.duplicateIgnored === false ? '非重复结算' : '重复状态未知',
+    ].join(' · ');
+    item.append(
+      heading,
+      text('p', 'libido：' + metricLabel(entry.libido), 'settlement-metric'),
+      text('p', 'arousal：' + metricLabel(entry.arousal), 'settlement-metric'),
+      text('p', flags, 'settlement-flags'),
+      text('p', 'refractory：' + (entry.refractoryUntil ? formatTime(entry.refractoryUntil) : '无可靠记录') +
+        ' · cooldown：' + (entry.cooldownUntil ? formatTime(entry.cooldownUntil) : '无可靠记录'),
+      'settlement-deadlines'),
+    );
+    fragment.append(item);
+  }
+  elements.settlementHistory.replaceChildren(fragment);
+}
+
 function render(snapshot) {
   elements.livePill.classList.toggle('stale', !snapshot.heartbeat.recentlyObserved);
   elements.liveLabel.textContent = snapshot.heartbeat.recentlyObserved ? 'Live' : '状态静止';
@@ -268,6 +338,7 @@ function render(snapshot) {
   renderTimeline(snapshot.timeline ?? [], snapshot.timelineTotal ?? 0);
   renderThoughts(snapshot.thoughts);
   renderRuntime(snapshot);
+  renderSettlements(snapshot.settlements);
   renderSoloSession(snapshot.soloSession);
 }
 

@@ -97,6 +97,31 @@ export function validateSoloSessionStore(store, config) {
       .test(JSON.stringify(session))) {
       throw new ValidationError('solo session contains forbidden material', 'SOLO_SESSION_STATE_CORRUPT');
     }
+    for (const field of ['arousalBefore', 'arousalAfter', 'libidoBefore', 'libidoAfter']) {
+      const value = session[field];
+      if (value !== undefined && value !== null &&
+          (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 1)) {
+        throw new ValidationError('solo settlement value is invalid', 'SOLO_SESSION_STATE_CORRUPT');
+      }
+    }
+    for (const field of ['refractoryUntil', 'cooldownUntil', 'settlementAt']) {
+      const value = session[field];
+      if (value !== undefined && value !== null &&
+          (typeof value !== 'object' || !Number.isSafeInteger(value.epochMs) ||
+            value.epochMs < 0 || typeof value.iso !== 'string' ||
+            Date.parse(value.iso) !== value.epochMs)) {
+        throw new ValidationError('solo settlement time is invalid', 'SOLO_SESSION_STATE_CORRUPT');
+      }
+    }
+    if (session.receiptStatus !== undefined &&
+        !['pending', 'settled', 'unknown'].includes(session.receiptStatus)) {
+      throw new ValidationError('solo receipt status is invalid', 'SOLO_SESSION_STATE_CORRUPT');
+    }
+    for (const field of ['settled', 'duplicateIgnored']) {
+      if (session[field] !== undefined && ![true, false, null].includes(session[field])) {
+        throw new ValidationError('solo settlement flag is invalid', 'SOLO_SESSION_STATE_CORRUPT');
+      }
+    }
     ids.add(session.sessionId);
   }
   if (store.processedRunIds.some((id) => typeof id !== 'string' ||
@@ -141,9 +166,16 @@ function baseSession(desireState, decision, nowMs) {
     output: null,
     reserveBefore: null,
     reserveAfter: null,
+    arousalBefore: null,
+    arousalAfter: null,
     libidoBefore: null,
     libidoAfter: null,
     refractoryUntil: null,
+    cooldownUntil: null,
+    settlementAt: null,
+    receiptStatus: 'unknown',
+    settled: null,
+    duplicateIgnored: null,
     releaseEffectId: null,
     noReleaseResult: null,
     abortReason: null,
@@ -326,6 +358,7 @@ export function applySoloGeneration({
   session.paused ||= parsed.paused;
   session.endured ||= parsed.endured;
   transition(session, 'active', nowMs);
+  session.arousalBefore ??= next.arousal.value;
   next.arousal = setReleaseGate(next.arousal, 'release_once');
   session.reserveBefore ??= next.arousal.reserve;
   let beatTime = Math.max(nowMs, next.arousal.updatedAt.epochMs);
@@ -369,6 +402,7 @@ export function applySoloGeneration({
   next.soloSessions.processedRunIds = next.soloSessions.processedRunIds.slice(-512);
   next.soloSessions.processedStepIds = next.soloSessions.processedStepIds.slice(-2048);
   session.reserveAfter = next.arousal.reserve;
+  session.arousalAfter = next.arousal.value;
   if (receipt) {
     session.outcome = 'completed_release';
     session.released = true;
@@ -414,6 +448,7 @@ export function settleSoloSession({ desireState, interactionState, config, nowMs
   let desire = clone(desireState);
   session.libidoBefore ??= desire.drives.libido;
   let applied = false;
+  let settlementEffectId = session.releaseEffectId;
   if (session.phase === 'completed_release') {
     const result = applyReleaseReceiptToDesire(next.arousal, desire, config);
     next.arousal = result.arousal;
@@ -425,6 +460,7 @@ export function settleSoloSession({ desireState, interactionState, config, nowMs
     }
   } else if (session.phase === 'completed_no_release') {
     const effectId = digest('effect', `no-release:${session.sessionId}`);
+    settlementEffectId = effectId;
     const result = applyNoReleaseSettlement(desire, config, {
       effectId, cause: 'solo', nowMs,
     });
@@ -439,6 +475,14 @@ export function settleSoloSession({ desireState, interactionState, config, nowMs
   }
   clearDecision(desire, session, nowMs);
   session.libidoAfter = desire.drives.libido;
+  const effectSettled = typeof settlementEffectId === 'string' &&
+    desire.appliedEffectIds?.includes(settlementEffectId);
+  session.cooldownUntil = session.phase === 'completed_release' && effectSettled
+    ? clone(desire.solo.refractoryUntil) : null;
+  session.settlementAt = timePair(nowMs);
+  session.receiptStatus = effectSettled ? 'settled' : 'unknown';
+  session.settled = effectSettled;
+  session.duplicateIgnored = effectSettled && !applied;
   transition(session, 'settled', nowMs);
   replaceSession(next.soloSessions, session, config.solo.sessionMaxCount);
   return { desireState: desire, interactionState: next, applied, session };

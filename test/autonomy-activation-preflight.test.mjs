@@ -60,8 +60,8 @@ async function fixture({ pending = false, timer = 'active' } = {}) {
     [files.heartbeat, heartbeat, 0o644], [files.delivery, delivery, 0o644],
     [files.state, state, 0o600], [files.credential, credential, 0o600],
     [files.sourceCredential, credential, 0o600],
-    [files.sourcePackage, { version: '0.9.14' }, 0o644],
-    [files.targetPackage, { version: '0.9.14' }, 0o644],
+    [files.sourcePackage, { version: '0.9.15' }, 0o644],
+    [files.targetPackage, { version: '0.9.15' }, 0o644],
   ];
   for (const [file, value, mode] of writes) {
     await writeFile(file, `${JSON.stringify(value)}\n`, { mode });

@@ -1,5 +1,23 @@
 # Release inventory
 
+## 0.9.15
+
+The v0.9.15 release adds a read-only “射精与满足结算” Dashboard module. Its
+allowlisted projection presents Chinese names for the four settlement scenarios,
+the latest settlement time, libido and arousal before/after values and deltas,
+refractory and cooldown state, receipt and deduplication status, and at most ten
+newest-first historical records. It provides an explicit empty-state message and
+renders absent legacy values as “未知” without inference or fabrication.
+
+Conversation bodies, thoughts, secrets, credentials, tokens, complete private
+URLs, and raw payloads remain outside the projection. The four settlement
+carryovers, deduplication rules, autonomous sending, feature gates, and
+production behavior are unchanged. The two generated runtime manifests derive
+version 0.9.15 from `package.json` and are required to be byte-identical.
+
+The v0.9.14 tag and every earlier tag remain immutable. Production remains on
+its separately installed version until v0.9.15 is explicitly installed.
+
 ## 0.9.14
 
 The v0.9.14 release fixes the remaining apply-time activation race. A confirmed

@@ -59,7 +59,13 @@ material remain request-only. Persisted records contain generated qualitative
 text and validated summaries, not source transcript, credentials, control
 material, or replay ledgers.
 
-The existing authenticated dashboard snapshot can include an allowlisted latest
-Solo view only when `soloSessionsEnabled=true`. The frontend card is absent when
-the flag is off. It uses the existing loopback server, login session, and port;
-no public route, new listener, or weaker authentication is introduced.
+In version 0.9.15, the existing authenticated dashboard snapshot can include an
+allowlisted latest Solo view only when `soloSessionsEnabled=true`. The frontend card is absent when
+the flag is off. Independently, the read-only settlement module may show
+allowlisted Solo completion results alongside partnered results, including
+before/after metrics, deadlines, receipt/deduplication status, and at most ten
+newest-first entries. Missing legacy fields remain “未知”; request context,
+generated thoughts, raw payloads, credentials, tokens, private URLs, and replay
+identifiers are not projected. It uses the existing loopback server, login
+session, and port; no public route, new listener, weaker authentication,
+settlement-factor change, or autonomous behavior is introduced.

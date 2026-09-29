@@ -294,6 +294,20 @@ h2 { margin: 0; font-size: 21px; font-weight: 650; }
 .runtime-row:last-child { border-bottom: 0; padding-bottom: 0; }
 .runtime-row dt { color: var(--muted); font-size: 12px; }
 .runtime-row dd { margin: 0; text-align: right; font-size: 12px; font-weight: 650; }
+.settlement-summary { padding-bottom: 10px; }
+.settlement-history { margin: 0; padding: 0 19px 18px; border-top: 1px solid var(--line); }
+.settlement-entry { padding: 16px 0; border-bottom: 1px solid var(--line); }
+.settlement-entry:last-child { border-bottom: 0; padding-bottom: 0; }
+.settlement-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 14px; }
+.settlement-heading strong { font-size: 13px; }
+.settlement-heading time { flex: 0 0 auto; color: var(--muted); font-size: 11px; }
+.settlement-metric { margin: 9px 0 0; color: #514957; font-size: 12px; line-height: 1.5; }
+.settlement-flags, .settlement-deadlines {
+  margin: 7px 0 0;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.55;
+}
 .manage-button {
   width: 100%;
   margin: 22px 0 18px;

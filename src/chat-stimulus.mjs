@@ -153,6 +153,50 @@ const SETTLEMENT_RANK = Object.freeze({
   solo_release: 2,
 });
 
+function emptySettlementResult({ duplicateIgnored = null } = {}) {
+  return {
+    libidoBefore: null,
+    libidoAfter: null,
+    arousalBefore: null,
+    arousalAfter: null,
+    refractoryUntil: null,
+    cooldownUntil: null,
+    receiptStatus: 'settled',
+    settled: true,
+    duplicateIgnored,
+  };
+}
+
+function validateOptionalTime(pair) {
+  return pair === null || (
+    pair && Number.isSafeInteger(pair.epochMs) && pair.epochMs >= 0 &&
+    typeof pair.iso === 'string' && Date.parse(pair.iso) === pair.epochMs
+  );
+}
+
+function validateSettlementResult(result) {
+  if (result === null) return;
+  const expected = [
+    'arousalAfter', 'arousalBefore', 'cooldownUntil', 'duplicateIgnored',
+    'libidoAfter', 'libidoBefore', 'receiptStatus', 'refractoryUntil', 'settled',
+  ].sort().join(',');
+  if (typeof result !== 'object' || Array.isArray(result) ||
+      Object.keys(result).sort().join(',') !== expected ||
+      !['pending', 'settled', 'unknown'].includes(result.receiptStatus) ||
+      ![true, false, null].includes(result.settled) ||
+      ![true, false, null].includes(result.duplicateIgnored) ||
+      !validateOptionalTime(result.refractoryUntil) ||
+      !validateOptionalTime(result.cooldownUntil)) {
+    throw new ValidationError('settlement result is invalid', 'CHAT_STATE_CORRUPT');
+  }
+  for (const field of ['libidoBefore', 'libidoAfter', 'arousalBefore', 'arousalAfter']) {
+    if (result[field] !== null &&
+        (!Number.isFinite(result[field]) || result[field] < 0 || result[field] > 1)) {
+      throw new ValidationError('settlement result value is invalid', 'CHAT_STATE_CORRUPT');
+    }
+  }
+}
+
 function digest(value) {
   return createHash('sha256').update(value).digest('hex');
 }
@@ -243,9 +287,12 @@ export function validateChatStimulusState(state, config) {
     throw new ValidationError('settlement fact ledger is invalid', 'CHAT_STATE_CORRUPT');
   }
   for (const fact of state.settlementFacts) {
-    if (fact === null || typeof fact !== 'object' || Array.isArray(fact) ||
-        Object.keys(fact).sort().join(',') !==
-          'at,carryoverFactor,effectId,eventIds,factFingerprint,type' ||
+    if (fact === null || typeof fact !== 'object' || Array.isArray(fact)) {
+      throw new ValidationError('settlement fact record is invalid', 'CHAT_STATE_CORRUPT');
+    }
+    fact.result ??= null;
+    if (Object.keys(fact).sort().join(',') !==
+          'at,carryoverFactor,effectId,eventIds,factFingerprint,result,type' ||
         typeof fact.factFingerprint !== 'string' ||
         !/^fact-[a-f0-9]{64}$/u.test(fact.factFingerprint) ||
         !SETTLEMENT_TYPES.has(fact.type) ||
@@ -261,6 +308,7 @@ export function validateChatStimulusState(state, config) {
     if (typeof fact.at.iso !== 'string' || Date.parse(fact.at.iso) !== fact.at.epochMs) {
       throw new ValidationError('settlement fact timestamp is invalid', 'CHAT_STATE_CORRUPT');
     }
+    validateSettlementResult(fact.result);
   }
   if (state.pendingSettlementReceipt !== null) {
     const receipt = state.pendingSettlementReceipt;
@@ -584,6 +632,8 @@ function stageSettlement(chatState, interpreted, nowMs, ledgerMaxCount) {
     const priorCause = prior.type.startsWith('solo_') ? 'solo' : 'partnered';
     const nextCause = type.startsWith('solo_') ? 'solo' : 'partnered';
     if (priorCause !== nextCause || SETTLEMENT_RANK[type] <= SETTLEMENT_RANK[prior.type]) {
+      prior.result ??= emptySettlementResult();
+      prior.result.duplicateIgnored = true;
       return false;
     }
   }

@@ -60,6 +60,49 @@ def fixture_state():
             "drives": copy.deepcopy(drives),
         }],
         "pendingDecision": None,
+        "appliedEffectIds": [],
+    }
+
+
+def settlement_fact(index, settlement_type, epoch_ms, result=None):
+    return {
+        "factFingerprint": "fact-private-" + str(index),
+        "effectId": "effect-private-" + str(index),
+        "eventIds": ["event-private-" + str(index)],
+        "carryoverFactor": 0.3,
+        "type": settlement_type,
+        "at": pair(epoch_ms),
+        "result": result,
+        "raw": "must never be exposed",
+        "thought": "must never be exposed",
+        "token": "must never be exposed",
+        "url": "https://private.invalid/secret/path",
+    }
+
+
+def settlement_result(before=0.8, after=0.24, duplicate=False):
+    return {
+        "libidoBefore": before,
+        "libidoAfter": after,
+        "arousalBefore": 0.9,
+        "arousalAfter": 0.18,
+        "refractoryUntil": pair(NOW + 3600000),
+        "cooldownUntil": None,
+        "receiptStatus": "settled",
+        "settled": True,
+        "duplicateIgnored": duplicate,
+        "payload": "must never be exposed",
+        "credential": "must never be exposed",
+    }
+
+
+def fixture_interaction(facts=None, sessions=None):
+    return {
+        "schema": "aru.desire-heartbeat.interaction-state.v1",
+        "version": 1,
+        "chat": {"settlementFacts": facts or [], "pendingSettlementReceipt": None},
+        "arousal": {"refractoryUntil": None, "pendingReleaseReceipt": None},
+        "soloSessions": {"sessions": sessions or []},
     }
 
 
@@ -150,10 +193,131 @@ class DashboardTests(unittest.TestCase):
         self.assertTrue(result["solo"]["enabled"])
         self.assertEqual(result["solo"]["count"], 0)
         self.assertFalse(result["solo"]["cooldownActive"])
+        self.assertEqual(result["settlements"]["history"], [])
+        self.assertIsNone(result["settlements"]["latestAt"])
         self.assertEqual(state, before)
+
+    def test_settlement_view_maps_all_four_types_and_values(self):
+        state = fixture_state()
+        types = [
+            "partnered_release", "partnered_no_release", "solo_release", "solo_no_release",
+        ]
+        facts = [
+            settlement_fact(index, settlement_type, NOW + index * 1000,
+                            settlement_result(0.8, 0.2 + index * 0.1, index == 3))
+            for index, settlement_type in enumerate(types)
+        ]
+        state["appliedEffectIds"] = [fact["effectId"] for fact in facts]
+        config = json.loads(self.config.read_text(encoding="utf-8"))
+        view = dashboard.create_dashboard_snapshot(
+            state, config, NOW + 5000, fixture_interaction(facts),
+        )["settlements"]
+        self.assertEqual([item["type"] for item in reversed(view["history"])], types)
+        self.assertEqual({item["typeLabel"] for item in view["history"]}, {
+            "双方亲密，明确高潮/射精", "双方亲密，未高潮/未射精",
+            "自己解决，明确高潮/射精", "自己解决，未高潮/未射精",
+        })
+        self.assertEqual(view["history"][-1]["libido"], {
+            "beforePercent": 80, "afterPercent": 20, "changePercent": -60,
+        })
+        self.assertEqual(view["history"][-1]["arousal"]["beforePercent"], 90)
+        self.assertTrue(view["history"][0]["duplicateIgnored"])
+
+    def test_settlement_history_is_descending_and_limited_to_ten(self):
+        facts = [
+            settlement_fact(index, "partnered_release", NOW + index * 1000,
+                            settlement_result())
+            for index in range(12)
+        ]
+        state = fixture_state()
+        state["appliedEffectIds"] = [fact["effectId"] for fact in facts]
+        config = json.loads(self.config.read_text(encoding="utf-8"))
+        history = dashboard.create_dashboard_snapshot(
+            state, config, NOW + 20000, fixture_interaction(facts),
+        )["settlements"]["history"]
+        self.assertEqual(len(history), 10)
+        self.assertEqual(history[0]["time"], pair(NOW + 11000)["iso"])
+        self.assertEqual(history[-1]["time"], pair(NOW + 2000)["iso"])
+
+    def test_legacy_missing_and_damaged_settlements_are_safe(self):
+        missing = settlement_fact(1, "partnered_no_release", NOW, None)
+        damaged = settlement_fact(2, "unknown_type", NOW + 1000, settlement_result())
+        partial = settlement_fact(3, "solo_no_release", NOW + 2000, {
+            "libidoBefore": 0.7,
+            "libidoAfter": "damaged",
+            "receiptStatus": "damaged",
+        })
+        config = json.loads(self.config.read_text(encoding="utf-8"))
+        view = dashboard.create_dashboard_snapshot(
+            fixture_state(), config, NOW + 3000,
+            fixture_interaction([missing, damaged, partial, "broken"]),
+        )["settlements"]
+        self.assertEqual(len(view["history"]), 2)
+        self.assertEqual(view["history"][0]["receiptStatus"], "unknown")
+        self.assertEqual(view["history"][0]["libido"], {
+            "beforePercent": 70, "afterPercent": None, "changePercent": None,
+        })
+        self.assertEqual(view["history"][1]["libido"]["beforePercent"], None)
+
+    def test_pending_receipt_overrides_an_older_settled_result(self):
+        fact = settlement_fact(1, "partnered_release", NOW, settlement_result())
+        interaction = fixture_interaction([fact])
+        interaction["chat"]["pendingSettlementReceipt"] = {
+            "factFingerprint": fact["factFingerprint"],
+        }
+        config = json.loads(self.config.read_text(encoding="utf-8"))
+        view = dashboard.create_dashboard_snapshot(
+            fixture_state(), config, NOW + 1, interaction,
+        )["settlements"]
+        self.assertEqual(view["receiptStatus"], "pending")
+        self.assertEqual(view["history"][0]["receiptStatus"], "pending")
+        self.assertFalse(view["history"][0]["settled"])
+
+    def test_refractory_cooldown_and_solo_settlement_are_projected(self):
+        state = fixture_state()
+        state["solo"] = {
+            "count": 1, "lastSoloAt": pair(NOW),
+            "refractoryUntil": pair(NOW + 120000), "lastLibidoChoice": "solo",
+        }
+        session = {
+            "outcome": "completed_release", "settlementAt": pair(NOW),
+            "libidoBefore": 0.9, "libidoAfter": 0.342,
+            "arousalBefore": 1, "arousalAfter": 0.2,
+            "refractoryUntil": pair(NOW + 60000),
+            "cooldownUntil": pair(NOW + 120000),
+            "receiptStatus": "settled", "settled": True, "duplicateIgnored": False,
+        }
+        interaction = fixture_interaction(sessions=[session])
+        interaction["arousal"]["refractoryUntil"] = pair(NOW + 60000)
+        config = json.loads(self.config.read_text(encoding="utf-8"))
+        view = dashboard.create_dashboard_snapshot(
+            state, config, NOW + 30000, interaction,
+        )["settlements"]
+        self.assertTrue(view["refractory"]["active"])
+        self.assertEqual(view["refractory"]["remainingSeconds"], 30)
+        self.assertTrue(view["cooldown"]["active"])
+        self.assertEqual(view["cooldown"]["remainingSeconds"], 90)
+        self.assertEqual(view["history"][0]["type"], "solo_release")
+
+    def test_settlement_projection_filters_private_fields(self):
+        fact = settlement_fact(1, "partnered_release", NOW, settlement_result())
+        state = fixture_state()
+        state["appliedEffectIds"] = [fact["effectId"]]
+        config = json.loads(self.config.read_text(encoding="utf-8"))
+        view = dashboard.create_dashboard_snapshot(
+            state, config, NOW + 1, fixture_interaction([fact]),
+        )["settlements"]
+        serialized = json.dumps(view, ensure_ascii=False)
+        for forbidden in ("raw", "thought", "token", "credential", "payload",
+                          "private.invalid", "fact-private", "effect-private", "event-private"):
+            self.assertNotIn(forbidden, serialized)
 
     def test_api_is_read_only_and_non_cacheable(self):
         before = self.state_path.read_bytes()
+        interaction_path = self.data / "interaction-state.json"
+        interaction_path.write_text(json.dumps(fixture_interaction()), encoding="utf-8")
+        os.chmod(interaction_path, 0o600)
+        interaction_before = interaction_path.read_bytes()
         origin = self.serve()
         with self.authenticated_open(origin, "/api/snapshot") as response:
             self.assertEqual(response.status, 200)
@@ -162,6 +326,7 @@ class DashboardTests(unittest.TestCase):
             result = json.loads(response.read())
         self.assertEqual(result["schema"], "aru.desire-dashboard.snapshot.v1")
         self.assertEqual(self.state_path.read_bytes(), before)
+        self.assertEqual(interaction_path.read_bytes(), interaction_before)
 
     def test_web_login_protects_snapshot_and_uses_secure_cookie(self):
         origin = self.serve()
@@ -202,6 +367,9 @@ class DashboardTests(unittest.TestCase):
             script = response.read().decode("utf-8")
         self.assertIn("textContent", script)
         self.assertNotIn("innerHTML", script)
+        self.assertIn("暂无射精或满足结算记录", script)
+        page = (self.public / "index.html").read_text(encoding="utf-8")
+        self.assertIn("射精与满足结算", page)
 
     def test_timeline_rejects_raw_text_and_unknown_reasons(self):
         entry = copy.deepcopy(fixture_state()["timeline"][0])

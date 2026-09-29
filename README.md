@@ -19,6 +19,22 @@ The optional Solo Session layer separates autonomous selection from preparation,
 structured action beats, edge, release/no-release completion, and downstream
 settlement. It is also disabled by default. See `SOLO_SESSION_DESIGN.md`.
 
+## 0.9.15
+
+Version 0.9.15 adds a read-only “射精与满足结算” Dashboard module. It shows the
+four settlement scenarios in Chinese, the latest settlement time, libido and
+arousal before/after values and deltas, refractory and cooldown deadlines,
+receipt and deduplication status, and the latest ten records in descending time
+order. The empty state is explicit, and missing legacy fields render as “未知”
+instead of being inferred or fabricated.
+
+The projection is an explicit allowlist of structured fields. It never returns
+conversation bodies, thoughts, secrets, credentials, tokens, complete private
+URLs, or raw payloads. This release does not change the four settlement
+carryovers, deduplication, autonomous delivery, or production behavior. Both
+generated runtime manifests derive version 0.9.15 from `package.json` and must
+remain byte-identical.
+
 ## 0.9.14
 
 Version 0.9.14 removes the apply-time activation race left in 0.9.13. A

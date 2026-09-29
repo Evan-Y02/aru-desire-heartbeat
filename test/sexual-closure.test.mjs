@@ -165,7 +165,15 @@ for (const [type, text, factor, releases] of settlements) {
     });
     assert.ok(Math.abs(settled.desireState.drives.libido - 0.80 * factor) < 1e-12);
     assert.equal(settled.interactionState.chat.pendingSettlementReceipt, null);
-    assert.equal(settled.interactionState.chat.settlementFacts[0].type, type);
+    const fact = settled.interactionState.chat.settlementFacts[0];
+    assert.equal(fact.type, type);
+    assert.equal(fact.result.libidoBefore, 0.80);
+    assert.equal(fact.result.libidoAfter, settled.desireState.drives.libido);
+    assert.equal(fact.result.arousalBefore, staged.interactionState.arousal.value);
+    assert.equal(fact.result.arousalAfter, settled.interactionState.arousal.value);
+    assert.equal(fact.result.receiptStatus, 'settled');
+    assert.equal(fact.result.settled, true);
+    assert.equal(fact.result.duplicateIgnored, false);
     assert.equal(settled.interactionState.arousal.refractoryUntil !== null, releases);
     assert.equal(settled.desireState.solo.refractoryUntil !== null, type === 'solo_release');
   });
@@ -215,6 +223,16 @@ test('assistant restatement upgrades one fact once without stacking settlement',
   assert.equal(upgraded.interactionState.chat.settlementFacts.length, 1);
   assert.equal(upgraded.interactionState.chat.settlementFacts[0].type, 'partnered_release');
   assert.ok(upgraded.interactionState.arousal.refractoryUntil);
+  const duplicate = process({
+    config: initial.config,
+    desireState: upgraded.desireState,
+    interactionState: upgraded.interactionState,
+  }, '你和我刚才做爱结束了，你高潮了。', 'fact-duplicate', START + 3, {
+    role: 'assistant', parentMessageId: 'fact-user',
+  });
+  assert.equal(duplicate.interactionState.chat.pendingSettlementReceipt, null);
+  assert.equal(duplicate.interactionState.chat.settlementFacts.length, 1);
+  assert.equal(duplicate.interactionState.chat.settlementFacts[0].result.duplicateIgnored, true);
 });
 
 test('an affirmative release in a mixed partnered report outranks no-release wording', () => {
@@ -273,6 +291,10 @@ test('receipt crash replay applies the effect once and clears the receipt', () =
   assert.equal(replay.interactionState.chat.pendingSettlementReceipt, null);
   assert.equal(replay.interactionState.chat.settlementFacts.length, 1);
   assert.ok(replay.interactionState.arousal.refractoryUntil);
+  const legacy = structuredClone(first.interactionState);
+  delete legacy.chat.settlementFacts[0].result;
+  validateInteractionState(legacy, initial.config);
+  assert.equal(legacy.chat.settlementFacts[0].result, null);
 });
 
 test('v0.9.8 interaction state migrates without losing its old ledgers', () => {

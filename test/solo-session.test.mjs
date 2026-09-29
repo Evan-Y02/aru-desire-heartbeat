@@ -202,6 +202,14 @@ test('Solo without release retains 80 percent libido and consumes no reserve', (
   });
   assert.ok(Math.abs(settled.desireState.drives.libido - 0.95 * 0.80) < 1e-12);
   assert.equal(settled.session.phase, 'settled');
+  assert.equal(settled.session.libidoBefore, 0.95);
+  assert.equal(settled.session.libidoAfter, settled.desireState.drives.libido);
+  assert.equal(settled.session.arousalBefore, prepared.interactionState.arousal.value);
+  assert.equal(settled.session.arousalAfter, generated.interactionState.arousal.value);
+  assert.equal(settled.session.receiptStatus, 'settled');
+  assert.equal(settled.session.settled, true);
+  assert.equal(settled.session.duplicateIgnored, false);
+  assert.equal(settled.session.cooldownUntil, null);
 });
 
 test('legal Solo release retains 38 percent libido and settles only once', () => {
@@ -228,6 +236,13 @@ test('legal Solo release retains 38 percent libido and settles only once', () =>
     START + 90_000 + setup.config.solo.cooldownSeconds * 1000,
   );
   assert.ok(first.session.refractoryUntil.epochMs < first.desireState.solo.refractoryUntil.epochMs);
+  assert.deepEqual(first.session.cooldownUntil, first.desireState.solo.refractoryUntil);
+  assert.equal(first.session.settlementAt.epochMs, START + 90_000);
+  assert.equal(first.session.receiptStatus, 'settled');
+  assert.equal(first.session.settled, true);
+  assert.equal(first.session.duplicateIgnored, false);
+  assert.equal(typeof first.session.arousalBefore, 'number');
+  assert.equal(typeof first.session.arousalAfter, 'number');
   const replay = settleSoloSession({
     desireState: first.desireState,
     interactionState: first.interactionState,

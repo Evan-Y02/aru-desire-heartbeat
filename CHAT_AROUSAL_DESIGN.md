@@ -89,6 +89,21 @@ layer. It reports an already-completed event through the same protected receiver
 receipt boundary. Installation and gate changes remain deliberate; building
 this release performs neither.
 
+## Read-only settlement projection
+
+Version 0.9.15 makes the authenticated Dashboard read settlement state without
+mutating it. Its
+allowlisted view contains only the four scenario labels, settlement time,
+libido/arousal before and after values plus their calculated deltas,
+refractory/cooldown deadlines, receipt and deduplication status, and the latest
+ten records in descending order. Missing legacy values remain unknown; the
+projection does not reconstruct them.
+
+Conversation bodies, thoughts, secrets, credentials, tokens, complete private
+URLs, raw payloads, event IDs, effect IDs, and fact fingerprints are excluded.
+Recording the already-computed result does not alter settlement factors,
+deduplication, autonomous sending, feature gates, or production flow.
+
 ## Installation acceptance isolation
 
 The installation acceptance path and installer never read or copy production
