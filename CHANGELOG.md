@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.9.14
+
+- Remove the pre-quiesce apply-time preflight that allowed an active timer to
+  race a separately successful activation preflight.
+- Run exactly one complete apply-time preflight after the timer is stopped and
+  the heartbeat service is confirmed inactive; an inactive timer remains a
+  valid preflight state.
+- Pin activation ordering and rollback coverage so any failure restores the
+  prior timer state and protected files, removes an attempt-created enable file,
+  and cannot leave delivery half-enabled.
+- Carry package version 0.9.14 into both generated, byte-identical runtime
+  manifests and the guarded installation path.
+
 ## 0.9.13
 
 - Minimize autonomous external-trigger events by omitting all drive values,

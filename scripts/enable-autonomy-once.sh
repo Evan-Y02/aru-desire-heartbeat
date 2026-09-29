@@ -109,7 +109,6 @@ fi
 for command in node runuser curl install mktemp stat readlink mv rm systemctl id; do
   need "$command"
 done
-privacy_safe_preflight >/dev/null || die "privacy-safe activation preflight failed"
 [[ -d "$SOURCE" && ! -L "$SOURCE" ]] || die "source directory is unsafe"
 [[ -d "$TARGET" && ! -L "$TARGET" ]] || die "installed application is unsafe"
 SOURCE_VERSION="$(node -p "require('$SOURCE/package.json').version")"

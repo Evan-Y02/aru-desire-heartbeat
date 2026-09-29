@@ -24,6 +24,13 @@ test('heartbeat units avoid startup catch-up and run Node without JIT', async ()
 test('autonomy enable rebases safely before opening every gate', async () => {
   const source = await readFile(enablePath, 'utf8');
   const preflight = await readFile(preflightPath, 'utf8');
+  const apply = source.slice(source.indexOf('[[ "$EUID" -eq 0 ]]'));
+  const timerSnapshot = apply.indexOf('TIMER_WAS_ENABLED="$(systemctl is-enabled');
+  const rollbackTrap = apply.indexOf('trap rollback_failure EXIT ERR INT TERM');
+  const timerStop = apply.indexOf('systemctl stop "$TIMER"');
+  const quiescedPreflight = apply.indexOf('privacy_safe_preflight >/dev/null');
+  const pendingCheck = apply.indexOf('a pending decision must be resolved before enabling');
+  const gateOpen = apply.indexOf('x.observeOnly=false;x.deliveryEnabled=true');
   assert.match(source, /trap rollback_failure EXIT ERR INT TERM/);
   assert.match(source, /credential permissions are unsafe/);
   assert.match(source, /parseSenderBundle/);
@@ -32,13 +39,22 @@ test('autonomy enable rebases safely before opening every gate', async () => {
   assert.match(source, /--preflight/);
   assert.match(source, /privacy_safe_preflight/);
   assert.match(source, /systemctl stop "\$TIMER"/);
-  assert.ok(source.indexOf('systemctl stop "$TIMER"') <
-    source.indexOf('a pending decision must be resolved before enabling'));
+  assert.equal(apply.match(/privacy_safe_preflight >\/dev\/null/gu)?.length, 1);
+  assert.ok(timerSnapshot < rollbackTrap);
+  assert.ok(rollbackTrap < timerStop);
+  assert.ok(timerStop < quiescedPreflight);
+  assert.ok(quiescedPreflight < pendingCheck);
+  assert.ok(pendingCheck < gateOpen);
   assert.doesNotMatch(source, /readonly SOURCE="\/home\/xinchao/u);
   assert.doesNotMatch(source, /x\.enabled=true;fs\.writeFileSync/u);
   const rollback = source.slice(
     source.indexOf('rollback_failure() {'), source.indexOf('privacy_safe_preflight() {'),
   );
+  assert.match(rollback, /restore_file "\$ATTEMPT\/default\.json" "\$HEARTBEAT"/u);
+  assert.match(rollback, /restore_file "\$ATTEMPT\/aru-delivery\.json" "\$DELIVERY"/u);
+  assert.match(rollback, /restore_file "\$ATTEMPT\/state\.json" "\$DATA\/state\.json"/u);
+  assert.match(rollback, /systemctl enable "\$TIMER"/u);
+  assert.match(rollback, /systemctl start "\$TIMER"/u);
   assert.ok(rollback.indexOf('rm -f -- "$ENABLE_FILE"') <
     rollback.lastIndexOf('systemctl start "$TIMER"'));
   assert.match(source, /rebase-clock/);

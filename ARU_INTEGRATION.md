@@ -108,3 +108,14 @@ verify its complete payload without using the real credential or network.
 
 With the committed defaults, delivery remains disabled. No files are installed,
 no timer is enabled, and no Aru message has been sent.
+
+## Activation sequencing
+
+Version 0.9.14 keeps the standalone preflight strictly read-only. During a
+separately confirmed apply, the script first records the timer state and installs
+failure recovery, then quiesces the timer and confirms the heartbeat service is
+inactive. It runs exactly one complete internal preflight in that stable state;
+an inactive timer is valid and requires no additional quiesce. Delivery gates and
+the enable file remain unchanged until this preflight and the final pending
+decision check pass. Every later failure closes delivery and restores the prior
+timer and protected-file state, so no half-enabled state remains.

@@ -60,8 +60,8 @@ async function fixture({ pending = false, timer = 'active' } = {}) {
     [files.heartbeat, heartbeat, 0o644], [files.delivery, delivery, 0o644],
     [files.state, state, 0o600], [files.credential, credential, 0o600],
     [files.sourceCredential, credential, 0o600],
-    [files.sourcePackage, { version: '0.9.13' }, 0o644],
-    [files.targetPackage, { version: '0.9.13' }, 0o644],
+    [files.sourcePackage, { version: '0.9.14' }, 0o644],
+    [files.targetPackage, { version: '0.9.14' }, 0o644],
   ];
   for (const [file, value, mode] of writes) {
     await writeFile(file, `${JSON.stringify(value)}\n`, { mode });
@@ -104,6 +104,14 @@ test('clean fixture passes and reports that an active timer needs quiescing', as
   assert.equal(report.result, 'PASS');
   assert.equal(report.timerQuiesceRequired, 1);
   assert.equal(report.credential, 'PASS');
+});
+
+test('quiesced fixture passes without requiring the timer to remain active', async () => {
+  const { options } = await fixture({ timer: 'inactive' });
+  const report = await runAutonomyActivationPreflight(options);
+  assert.equal(report.result, 'PASS');
+  assert.equal(report.systemd, 'PASS');
+  assert.equal(report.timerQuiesceRequired, 0);
 });
 
 test('preflight output is fixed and never exposes credential or URL material', async () => {

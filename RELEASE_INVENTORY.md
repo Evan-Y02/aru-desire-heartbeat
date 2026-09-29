@@ -1,5 +1,23 @@
 # Release inventory
 
+## 0.9.14
+
+The v0.9.14 release fixes the remaining apply-time activation race. A confirmed
+apply records the timer's original state and installs automatic failure recovery
+before quiescing it, then runs exactly one complete privacy-safe preflight while
+the timer is inactive and the heartbeat service is stopped. That controlled
+inactive timer state is valid, so the internal preflight remains effective after
+quiesce instead of depending on the timer's original activity.
+
+No delivery gate changes before the quiesced preflight and pending-decision
+checks pass. Later failures restore changed configuration and state, remove an
+enable file created by the attempt, close delivery, and restore the timer's
+original enabled/active state. The two generated runtime manifests both derive
+version 0.9.14 from `package.json` and are required to be byte-identical.
+
+The v0.9.13 tag and every earlier tag remain immutable. Production remains on
+its separately installed version until v0.9.14 is explicitly installed.
+
 ## 0.9.13
 
 The v0.9.13 candidate minimizes the external-trigger payload and adds a

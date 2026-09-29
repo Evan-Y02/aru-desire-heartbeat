@@ -123,10 +123,15 @@ sudo ARU_LOCAL_MANIFEST_URL=http://127.0.0.1:8788/.well-known/aru.json \
 If you also require an externally reachable manifest, set
 `ARU_PUBLIC_MANIFEST_URL=https://aru.example.com/.well-known/aru.json`.
 
-The activation script stops the timer, rechecks that no pending decision exists,
-rebases the clock without growth, opens the two outer delivery gates while
-preserving unrelated feature gates, enables the timer, and prints rollback and
-stop commands. A failure restores the timer's prior enabled/active state.
+The activation script snapshots the timer's prior state, installs automatic
+failure recovery, stops the timer, confirms the heartbeat service is inactive,
+and then runs exactly one complete privacy-safe preflight. That preflight accepts
+the controlled inactive timer state. Only after it and the final pending-decision
+check pass does activation rebase the clock without growth and open the two outer
+delivery gates while preserving unrelated feature gates. A later failure closes
+delivery, removes any enable file created by the attempt, restores changed
+protected files and the timer's prior enabled/active state, and cannot leave a
+half-enabled installation.
 
 ## 8. Stop safely
 

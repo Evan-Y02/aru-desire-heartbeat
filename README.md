@@ -19,6 +19,22 @@ The optional Solo Session layer separates autonomous selection from preparation,
 structured action beats, edge, release/no-release completion, and downstream
 settlement. It is also disabled by default. See `SOLO_SESSION_DESIGN.md`.
 
+## 0.9.14
+
+Version 0.9.14 removes the apply-time activation race left in 0.9.13. A
+confirmed `--apply` now snapshots the timer state, installs its failure trap,
+quiesces the timer, verifies that the heartbeat service is inactive, and then
+runs exactly one complete privacy-safe preflight. The preflight accepts the
+timer's controlled inactive state and reports that no further quiesce is
+required.
+
+No delivery gate is opened before that quiesced preflight and the final pending
+decision check pass. Any later failure closes delivery, removes an enable file
+created by the attempt, restores protected files when changed, and returns the
+timer to its prior enabled/active state, preventing a half-enabled result. Both
+generated runtime manifests derive version 0.9.14 from the package and remain
+byte-identical across the independent heartbeat root and staged Aru release.
+
 ## 0.9.13
 
 Version 0.9.13 minimizes the external-trigger event to routing identity,
