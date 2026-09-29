@@ -1,5 +1,29 @@
 # Release inventory
 
+## 0.9.16
+
+Version 0.9.16 adds the formal active-production upgrade transaction. The new
+entry point accepts installed v0.9.14 and v0.9.15 layouts only, requires a fully
+enabled and internally consistent baseline with no pending decision, writes a
+complete root-only rollback snapshot before production mutation, and quiesces
+only after that snapshot is complete. It temporarily closes the two outer gates
+without changing the adapter gate or persistent state, runs the guarded runtime,
+Dashboard, and hook installer, verifies both runtime manifests, and restores the
+exact pre-upgrade gates, enable marker, timer, and service states.
+
+`rollback-active-production-upgrade.sh` is bound to the exact snapshot printed
+by a successful upgrade. It refuses explicit rollback after protected state has
+evolved, so rollback cannot silently discard newer state, ledger, timeline,
+pending, or receipt data.
+
+The v0.9.16 release inventory adds:
+
+- `scripts/upgrade-active-production-once.sh`
+- `scripts/rollback-active-production-upgrade.sh`
+- `scripts/active-production-upgrade-preflight.mjs`
+- `scripts/active-production-upgrade-gates.mjs`
+- `test/active-production-upgrade.test.mjs`
+
 ## 0.9.15
 
 The v0.9.15 release adds a read-only “射精与满足结算” Dashboard module. Its

@@ -150,15 +150,30 @@ This stops future cycles and closes delivery while preserving evolved state.
 
 ## 9. Upgrade
 
-Stop autonomy first, then:
+For an already enabled v0.9.14 or v0.9.15 production installation, use the
+single transactional entry point from the v0.9.16 checkout:
 
 ```bash
-sudo ./scripts/install-complete-message-hook-once.sh /absolute/path/to/v0.9.15/source
+sudo /absolute/path/to/v0.9.16/source/scripts/upgrade-active-production-once.sh --apply
 ```
 
-The guarded installer verifies tests and the two byte-identical runtime
-manifests, preserves state and credentials, and restores the prior service state
-or rolls back on failure. Review its output before any separate autonomy change.
+Do not stop autonomy first and do not invoke
+`install-complete-message-hook-once.sh` directly for an enabled installation.
+The active-production entry point verifies the installed identity and both
+manifests, creates the complete rollback snapshot before mutation, quiesces the
+timer and writers, applies temporary safe gates, invokes the guarded installer,
+and restores the exact prior gates and service state. Any failed stage invokes
+the snapshot-bound rollback automatically. On success it prints the only valid
+explicit rollback command. That rollback refuses to overwrite protected state
+after it has evolved.
+
+The direct complete-message installer remains valid only for initial or already
+disabled maintenance flows that satisfy its fail-closed gate precondition.
+
+Future releases must update the active-production transaction, supported source
+version allowlist, target-version assertion, rollback snapshot schema, and full
+isolated failure matrix together. A first-install script must never be presented
+as an enabled-production upgrade path.
 
 ## 10. Recovery
 

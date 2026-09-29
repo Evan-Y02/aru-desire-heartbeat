@@ -4,7 +4,7 @@ umask 077
 
 [[ ${EUID} -eq 0 ]] || { echo 'must run as root' >&2; exit 77; }
 [[ $# -eq 1 ]] || {
-  echo 'usage: install-complete-message-hook-once.sh /absolute/path/to/v0.9.15/source' >&2
+  echo 'usage: install-complete-message-hook-once.sh /absolute/path/to/v0.9.16/source' >&2
   exit 64
 }
 
@@ -22,8 +22,8 @@ process.stdout.write(JSON.parse(fs.readFileSync(process.argv[2], 'utf8')).versio
 NODE
 )
 readonly SOURCE_VERSION
-[[ $SOURCE_VERSION == 0.9.15 ]] || {
-  echo 'installer requires source version 0.9.15' >&2
+[[ $SOURCE_VERSION == 0.9.16 ]] || {
+  echo 'installer requires source version 0.9.16' >&2
   exit 64
 }
 
@@ -100,7 +100,7 @@ BRIDGE_CODE_BEFORE=$(curl --silent --max-time 2 --output /dev/null --write-out '
   http://127.0.0.1:18110/bridge/v1/health)
 readonly BRIDGE_CODE_BEFORE
 [[ -f $ARU_SECRET && ! -L $ARU_SECRET && -f $DESIRE_SECRET && ! -L $DESIRE_SECRET ]] || {
-  echo 'v0.9.15 safety upgrade requires the existing owner-only hook secret channel' >&2
+  echo 'v0.9.16 safety upgrade requires the existing owner-only hook secret channel' >&2
   exit 73
 }
 [[ $(stat -c '%U:%G:%a:%h' "$ARU_SECRET") == 'aru-selfhost:aru-selfhost:600:1' ]]

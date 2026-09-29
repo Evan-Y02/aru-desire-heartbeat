@@ -19,6 +19,23 @@ The optional Solo Session layer separates autonomous selection from preparation,
 structured action beats, edge, release/no-release completion, and downstream
 settlement. It is also disabled by default. See `SOLO_SESSION_DESIGN.md`.
 
+## 0.9.16 active-production upgrade
+
+Version 0.9.16 introduces `scripts/upgrade-active-production-once.sh --apply`
+for an already enabled v0.9.14 or v0.9.15 production installation. It is the
+only supported upgrade entry point while autonomy is enabled. It performs a
+snapshot-first transaction, quiesces the timer and state writers, temporarily
+closes only the installer-required outer gates, installs and verifies the new
+runtime, Dashboard, and hook, and then restores the exact prior gates, marker,
+timer, and service state. Persistent state and interaction files are hashed
+before and after and are never rewritten by the upgrade.
+
+The older `install-complete-message-hook-once.sh` remains an internal or
+disabled-installation primitive. It must not be invoked directly against an
+enabled production installation. Every future release that supports active
+production must extend the transactional entry point and its isolated failure
+matrix rather than documenting a manual disable/install/enable sequence.
+
 ## 0.9.15
 
 Version 0.9.15 adds a read-only “射精与满足结算” Dashboard module. It shows the

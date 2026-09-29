@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.9.16
+
+- Add `upgrade-active-production-once.sh`, a single transactional entry point
+  for upgrading an enabled v0.9.14 or v0.9.15 installation without the former
+  disable/install/enable gate deadlock.
+- Snapshot the current release, independent runtime, both manifests,
+  configurations, adapter gate, enable marker, units, service states, and
+  rollback metadata before quiescing production.
+- Keep state and interaction ledgers byte-identical, restore the exact prior
+  gates and systemd state after success, and automatically restore the complete
+  old installation after any failed stage.
+- Add an explicit snapshot-bound rollback command plus isolated dynamic-loopback
+  and simulated-systemd acceptance coverage.
+
 ## 0.9.15
 
 - Add the read-only “射精与满足结算” Dashboard module with Chinese labels for

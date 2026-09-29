@@ -32,6 +32,16 @@ interaction state, ledgers, receipts, pending records, and secret files all live
 under one new temporary directory. The fixture is removed on success and every
 failure path, and no real delivery endpoint is configured.
 
+This installer is not an enabled-production upgrade interface. Starting with
+the v0.9.16 release, an enabled installation must enter through
+`upgrade-active-production-once.sh`. That wrapper owns the complete pre-mutation
+snapshot, temporary gate transition, quiesce ordering, nested installer call,
+post-install identity verification, exact runtime-state restoration, and outer
+automatic rollback. Future versions must preserve this separation: installer
+preconditions remain fail-closed, while active upgrades adapt those conditions
+inside one tested transaction rather than requiring operators to hand-compose
+gate changes.
+
 Production Aru, receiver, and heartbeat writers are quiesced, but the installer
 never opens, copies, parses, hashes, creates, migrates, or writes production
 Desire or interaction state. The production state filenames are deliberately
