@@ -8,8 +8,10 @@ import { validateConfig, validateState } from '../src/schema.mjs';
 import { verifyFormalReleaseLayout } from './formal-release-layout.mjs';
 import { createRuntimeManifest } from './runtime-release-manifest.mjs';
 
-const EXPECTED_TARGET = '0.9.19';
-const SUPPORTED_OLD = new Set(['0.9.14', '0.9.15', '0.9.16', '0.9.17', '0.9.18']);
+const EXPECTED_TARGET = '0.9.20';
+const SUPPORTED_OLD = new Set([
+  '0.9.14', '0.9.15', '0.9.16', '0.9.17', '0.9.18', '0.9.19',
+]);
 const LEGACY_ATTEMPT_SCHEDULER_VERSIONS = new Set(['0.9.14', '0.9.15', '0.9.16']);
 const ATTEMPT_WINDOW_DEFAULTS = Object.freeze({
   attemptWindowMinSeconds: 1800,

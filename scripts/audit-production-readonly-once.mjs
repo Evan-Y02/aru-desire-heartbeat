@@ -331,7 +331,7 @@ async function releaseAudit() {
     'synthetic-check.mjs': currentFiles.get('synthetic-check.mjs')?.sha256 ===
       sha256(sourceSynthetic.bytes),
     'server.mjs': currentServer.bytes.equals(patchedServer),
-    'release-manifest.json': formalLayout.current === current && formalLayout.fileCount === 31,
+    'release-manifest.json': formalLayout.current === current && formalLayout.fileCount === 32,
   };
   const inherited = [];
   const generated = [];

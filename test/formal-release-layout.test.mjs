@@ -18,7 +18,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PACKAGE_VERSION = JSON.parse(
   await readFile(path.join(ROOT, 'package.json'), 'utf8'),
 ).version;
-assert.equal(PACKAGE_VERSION, '0.9.19');
+assert.equal(PACKAGE_VERSION, '0.9.20');
 const directories = [];
 test.after(async () => Promise.all(directories.map((directory) =>
   rm(directory, { recursive: true, force: true }))));
@@ -47,7 +47,7 @@ async function fixture() {
     await copyFile(path.join(ROOT, relative), destination);
   }
   const manifest = await createRuntimeManifest(heartbeatRoot);
-  assert.equal(manifest.fileCount, 31);
+  assert.equal(manifest.fileCount, 32);
   assert.equal(manifest.version, PACKAGE_VERSION);
   const manifestBytes = `${JSON.stringify(manifest, null, 2)}\n`;
   const heartbeatManifest = path.join(heartbeatRoot, 'release-manifest.json');
@@ -93,14 +93,14 @@ async function replaceMetadata(metadataPath, value) {
   await rename(next, metadataPath);
 }
 
-test('formal layout success binds current, expected metadata, and both 31-file manifests', async () => {
+test('formal layout success binds current, expected metadata, and both 32-file manifests', async () => {
   const f = await fixture();
   await switchCurrent(f.currentLink, f.newRelease);
   await replaceMetadata(f.metadataPath, f.metadata(f.newRelease, f.oldRelease));
   const result = await f.verify();
   assert.equal(result.current, f.newRelease);
   assert.equal(result.metadata.expectedCurrent, f.newRelease);
-  assert.equal(result.fileCount, 31);
+  assert.equal(result.fileCount, 32);
   assert.equal(result.version, PACKAGE_VERSION);
   assert.equal(result.releaseManifest, path.join(f.newRelease, 'release-manifest.json'));
   assert.equal(result.heartbeatManifest, f.heartbeatManifest);

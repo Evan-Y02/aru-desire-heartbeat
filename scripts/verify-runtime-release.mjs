@@ -12,6 +12,7 @@ export const RUNTIME_ENTRIES = Object.freeze([
   'bin/desire-interaction-init.mjs',
   'scripts/set-interaction-flags.mjs',
   'scripts/preserve-feature-flags.mjs',
+  'scripts/active-production-postinstall-verify.mjs',
   'scripts/runtime-release-manifest.mjs',
   'scripts/verify-runtime-release.mjs',
   'scripts/verify-synthetic-ledger.mjs',

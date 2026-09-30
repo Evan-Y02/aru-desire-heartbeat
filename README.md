@@ -19,6 +19,23 @@ The optional Solo Session layer separates autonomous selection from preparation,
 structured action beats, edge, release/no-release completion, and downstream
 settlement. It is also disabled by default. See `SOLO_SESSION_DESIGN.md`.
 
+## 0.9.20 active-upgrade post-install verification
+
+Version 0.9.20 fixes the production configuration permission regression caused
+by combining a root-owned atomic rewrite with the transaction's restrictive
+umask. Atomic configuration replacements now explicitly apply their declared
+mode, so the service-readable configuration remains root-owned mode 0644.
+
+The heartbeat timer stays inactive after installation until the installed
+runtime is exercised as the `aru-desire` service user. The verifier loads the
+heartbeat, delivery, state, and interaction schemas; generates the same
+allowlisted Dashboard snapshot used in production; and runs the real heartbeat
+entry point only against an isolated temporary copy with delivery disabled.
+Production state and interaction-state hashes must remain unchanged. Any
+failure reports only a fixed category and automatically restores the complete
+old snapshot. Both generated manifests derive version 0.9.20 from
+`package.json`; v0.9.19 and all older tags remain immutable.
+
 ## 0.9.19 active-upgrade baseline ordering
 
 Version 0.9.19 fixes the active-production wrapper/installer health-contract

@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.9.20
+
+- Force atomic configuration replacements to their declared modes even under
+  the root upgrade wrapper's restrictive umask, preventing a migrated
+  configuration from becoming unreadable to the `aru-desire` service account.
+- Keep the heartbeat timer inactive until an installed-runtime post-install
+  verifier has loaded configuration, state, interaction state, and delivery
+  settings as the service user and produced a Dashboard snapshot.
+- Exercise the real installed heartbeat entry point only against an isolated
+  temporary copy with delivery disabled, while proving both protected
+  production state files remain byte-identical.
+- Fail closed with fixed privacy-safe categories and automatically restore the
+  complete old snapshot when any post-install runtime check fails.
+- Extend repeated, rollback, root-umask, failure-injection, and source-version
+  coverage through v0.9.19, and carry package version 0.9.20 into both
+  byte-identical runtime manifests.
+
 ## 0.9.19
 
 - Run the complete enabled-production baseline health contract before the

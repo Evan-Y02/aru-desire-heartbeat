@@ -1,5 +1,42 @@
 # Release inventory
 
+## 0.9.20
+
+Version 0.9.20 repairs the root-umask permission regression exposed by the
+v0.9.19 active-production transaction. The atomic JSON writer now explicitly
+sets the requested mode after creating each temporary file, so replacement of
+the root-owned heartbeat configuration cannot silently change mode 0644 to
+0600 and make it unreadable to the service account.
+
+The transaction does not restore or start the heartbeat timer immediately
+after installation. It first runs a privacy-safe verifier as `aru-desire`
+against the installed release. The verifier loads heartbeat configuration,
+protected state, interaction state, and delivery configuration; exercises the
+Dashboard projection; and invokes the real cycle entry point against isolated
+temporary copies with both delivery gates closed. It proves the production
+state and interaction-state hashes are unchanged before allowing exact timer
+restoration. Any failed check triggers the existing snapshot-bound automatic
+rollback.
+
+Isolated coverage includes root-style umask behavior, successful and repeated
+execution, every critical rollback stage, five post-install failure classes,
+and source compatibility for v0.9.14, v0.9.17, v0.9.18, and v0.9.19. Both
+generated manifests derive version 0.9.20 from `package.json`, cover the same
+32-file runtime closure, and must remain byte-identical. No generated
+production manifest is committed, and v0.9.19 and every older tag remain
+immutable.
+
+The v0.9.20 upgrade and rollback inventory is:
+
+- `scripts/upgrade-active-production-once.sh`
+- `scripts/rollback-active-production-upgrade.sh`
+- `scripts/install-complete-message-hook-once.sh`
+- `scripts/active-production-upgrade-preflight.mjs`
+- `scripts/active-production-upgrade-gates.mjs`
+- `scripts/active-production-postinstall-verify.mjs`
+- `scripts/verify-runtime-release.mjs`
+- `test/active-production-upgrade.test.mjs`
+
 ## 0.9.19
 
 Version 0.9.19 repairs the deterministic ordering conflict found during the

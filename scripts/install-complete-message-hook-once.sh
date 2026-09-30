@@ -17,7 +17,7 @@ case ${1:-} in
     ;;
   *)
     [[ $# -eq 1 ]] || {
-      echo 'usage: install-complete-message-hook-once.sh /absolute/path/to/v0.9.19/source' >&2
+      echo 'usage: install-complete-message-hook-once.sh /absolute/path/to/v0.9.20/source' >&2
       exit 64
     }
     SOURCE_ARGUMENT=$1
@@ -39,8 +39,8 @@ process.stdout.write(JSON.parse(fs.readFileSync(process.argv[2], 'utf8')).versio
 NODE
 )
 readonly SOURCE_VERSION
-[[ $SOURCE_VERSION == 0.9.19 ]] || {
-  echo 'installer requires source version 0.9.19' >&2
+[[ $SOURCE_VERSION == 0.9.20 ]] || {
+  echo 'installer requires source version 0.9.20' >&2
   exit 64
 }
 
@@ -154,7 +154,7 @@ esac
 [[ $DEVICE_COUNT_BEFORE =~ ^[0-9]+$ && $BRIDGE_CODE_BEFORE =~ ^[0-9]{3}$ ]]
 readonly DEVICE_COUNT_BEFORE BRIDGE_CODE_BEFORE
 [[ -f $ARU_SECRET && ! -L $ARU_SECRET && -f $DESIRE_SECRET && ! -L $DESIRE_SECRET ]] || {
-  echo 'v0.9.19 safety upgrade requires the existing owner-only hook secret channel' >&2
+  echo 'v0.9.20 safety upgrade requires the existing owner-only hook secret channel' >&2
   exit 73
 }
 [[ $(stat -c '%U:%G:%a:%h' "$ARU_SECRET") == 'aru-selfhost:aru-selfhost:600:1' ]]
@@ -510,12 +510,18 @@ fi
 [[ $(systemctl is-enabled aru-desire-turn-receiver.service 2>/dev/null || true) == \
   "$RECEIVER_WAS_ENABLED" ]]
 INSTALL_STAGE=restore_heartbeat_timer
-if [[ $HEARTBEAT_TIMER_WAS_ACTIVE == active ]]; then
-  systemctl start "$HEARTBEAT_TIMER"
-else
+if [[ $INSTALL_MODE == active-apply-quiesced ]]; then
+  # The outer transaction owns post-install verification and timer restoration.
   systemctl stop "$HEARTBEAT_TIMER"
+  [[ $(systemctl is-active "$HEARTBEAT_TIMER" || true) == inactive ]]
+else
+  if [[ $HEARTBEAT_TIMER_WAS_ACTIVE == active ]]; then
+    systemctl start "$HEARTBEAT_TIMER"
+  else
+    systemctl stop "$HEARTBEAT_TIMER"
+  fi
+  [[ $(systemctl is-active "$HEARTBEAT_TIMER" || true) == "$HEARTBEAT_TIMER_WAS_ACTIVE" ]]
 fi
-[[ $(systemctl is-active "$HEARTBEAT_TIMER" || true) == "$HEARTBEAT_TIMER_WAS_ACTIVE" ]]
 [[ $(systemctl is-enabled "$HEARTBEAT_TIMER" 2>/dev/null || true) == \
   "$HEARTBEAT_TIMER_WAS_ENABLED" ]]
 trap - ERR

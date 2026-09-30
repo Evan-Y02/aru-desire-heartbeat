@@ -6,7 +6,7 @@ umask 077
 readonly MODE=${1:-}
 readonly SCRIPT_DIR="$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")"
 readonly SOURCE_ROOT="$(dirname -- "$SCRIPT_DIR")"
-readonly TARGET_VERSION=0.9.19
+readonly TARGET_VERSION=0.9.20
 readonly ROLLBACK_SCRIPT="$SCRIPT_DIR/rollback-active-production-upgrade.sh"
 
 TEST_MODE=false
@@ -82,6 +82,16 @@ systemd_unit_equivalent() {
   node "$SCRIPT_DIR/active-production-upgrade-preflight.mjs" \
     --compare-systemd-unit "$1" "$2"
 }
+postinstall_verify() {
+  if [[ $TEST_MODE == true ]]; then
+    node "$DESIRE_ROOT/scripts/active-production-postinstall-verify.mjs" \
+      "$DESIRE_ROOT" "$DATA_ROOT" "$TARGET_VERSION"
+  else
+    runuser -u aru-desire -- /usr/bin/node \
+      "$DESIRE_ROOT/scripts/active-production-postinstall-verify.mjs" \
+      "$DESIRE_ROOT" "$DATA_ROOT" "$TARGET_VERSION"
+  fi
+}
 handle_error() {
   local status=$?
   trap - ERR EXIT INT TERM
@@ -103,7 +113,7 @@ handle_error() {
 trap handle_error ERR INT TERM
 
 [[ $MODE == --apply && $# -eq 1 ]] || fail
-for command in node bash cp cmp diff curl id install mktemp mv rm sha256sum stat readlink sed chmod; do
+for command in node bash cp cmp diff curl id install mktemp mv rm runuser sha256sum stat readlink sed chmod; do
   command -v "$command" >/dev/null 2>&1 || fail
 done
 [[ -x $ROLLBACK_SCRIPT && -x $INSTALLER ]] || fail
@@ -142,7 +152,7 @@ fi
 grep -qx 'ACTIVE_UPGRADE_PREFLIGHT=PASS' <<< "$PREFLIGHT_OUTPUT" || fail internal_preflight_output
 OLD_VERSION="$(sed -n 's/^old_version=//p' <<< "$PREFLIGHT_OUTPUT")"
 [[ $OLD_VERSION == 0.9.14 || $OLD_VERSION == 0.9.15 || $OLD_VERSION == 0.9.16 || \
-   $OLD_VERSION == 0.9.17 || $OLD_VERSION == 0.9.18 ]] || \
+   $OLD_VERSION == 0.9.17 || $OLD_VERSION == 0.9.18 || $OLD_VERSION == 0.9.19 ]] || \
   fail installed_version
 [[ "$("$SYSTEMCTL_BIN" is-enabled "$TIMER" 2>/dev/null || true)" == enabled ]] || \
   fail timer_not_enabled
@@ -330,8 +340,22 @@ restore_active "$RECEIVER"
 restore_active "$ARU"
 restore_active "$DASHBOARD"
 restore_active "$HEARTBEAT"
-restore_active "$TIMER"
 checkpoint after_restore_services
+
+STAGE=postinstall_verify
+[[ "$("$SYSTEMCTL_BIN" is-active "$TIMER" 2>/dev/null || true)" == inactive ]]
+sha256sum -c --quiet "$ATTEMPT/protected-state.sha256"
+[[ "$(stat -c '%a' "$DESIRE_ROOT/config/default.json")" == 644 ]]
+if [[ $TEST_MODE == false ]]; then
+  [[ "$(stat -c '%U:%G:%h' "$DESIRE_ROOT/config/default.json")" == root:root:1 ]]
+fi
+postinstall_verify | grep -qx 'ACTIVE_POSTINSTALL_VERIFY=PASS'
+sha256sum -c --quiet "$ATTEMPT/protected-state.sha256"
+checkpoint after_postinstall_verify
+
+STAGE=restore_timer
+restore_active "$TIMER"
+checkpoint after_restore_timer
 
 STAGE=final_verify
 sha256sum -c --quiet "$ATTEMPT/protected-state.sha256"

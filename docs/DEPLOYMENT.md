@@ -150,12 +150,11 @@ This stops future cycles and closes delivery while preserving evolved state.
 
 ## 9. Upgrade
 
-For an already enabled v0.9.14 through v0.9.18 production installation, use
-the single transactional entry point from the v0.9.19
-checkout:
+For an already enabled v0.9.14 through v0.9.19 production installation, use
+the single transactional entry point from the v0.9.20 checkout:
 
 ```bash
-sudo /absolute/path/to/v0.9.19/source/scripts/upgrade-active-production-once.sh --apply
+sudo /absolute/path/to/v0.9.20/source/scripts/upgrade-active-production-once.sh --apply
 ```
 
 The preflight emits a fixed `failure_class`. Its systemd comparison
@@ -165,12 +164,21 @@ parameter, permission, user, environment assignment, unit section, or other
 effective content fails closed before backup creation, production mutation, or
 service quiesce.
 
-Version 0.9.19 runs the complete live baseline health contract before it creates
+Version 0.9.20 runs the complete live baseline health contract before it creates
 the rollback snapshot or quiesces any service. The nested installer then checks
 an explicit quiesced-state contract and reuses the owner-only non-sensitive
 baseline snapshot; it does not require an intentionally stopped service to
 answer. A genuine baseline fault still fails before production mutation, while
 every failure after snapshot creation retains automatic rollback.
+
+After installation, the heartbeat timer remains inactive while a verifier runs
+as the `aru-desire` service user. It loads the installed configuration, state,
+interaction state, and delivery schema; generates a Dashboard snapshot; and
+executes the real cycle entry point only against isolated temporary copies with
+delivery disabled. The transaction confirms both protected production-state
+hashes remain unchanged before restoring the exact previous timer state. Any
+failure is reported by a fixed privacy-safe category and triggers automatic
+snapshot rollback.
 
 For manifest-bound v0.9.14–v0.9.16 installations, preflight supplies the
 attempt-window defaults and null next-attempt field only in its in-memory

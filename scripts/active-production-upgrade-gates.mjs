@@ -5,6 +5,8 @@ async function atomicJson(file, value, mode = 0o644) {
   const temporary = `${file}.active-upgrade.tmp`;
   const handle = await open(temporary, 'wx', mode);
   try {
+    // The root wrapper runs with umask 0077; force the intended public mode.
+    await handle.chmod(mode);
     await handle.writeFile(`${JSON.stringify(value, null, 2)}\n`);
     await handle.sync();
   } finally {
