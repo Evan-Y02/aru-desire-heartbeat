@@ -221,6 +221,12 @@ export async function deliverPending({
       code: error instanceof DeliveryError ? error.code : 'EXTERNAL_TRIGGER_REQUEST_FAILED',
     }).catch(() => {});
     if (error instanceof DeliveryError) throw error;
+    if (error?.code === 'ARU_SUBMISSION_TIMEOUT') {
+      throw new DeliveryError('external trigger request timed out', 'DELIVERY_TIMEOUT');
+    }
+    if (error?.code === 'ARU_REQUEST_FAILED') {
+      throw new DeliveryError('external trigger receiver is unreachable', 'RECEIVER_UNREACHABLE');
+    }
     throw new DeliveryError('external trigger request failed', 'EXTERNAL_TRIGGER_REQUEST_FAILED');
   }
 }

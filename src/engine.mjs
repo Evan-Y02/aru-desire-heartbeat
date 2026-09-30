@@ -56,6 +56,7 @@ export function createInitialState(config, epochMs = Date.now()) {
     updatedAt: at,
     lastTickAt: at,
     lastDecisionAt: null,
+    nextAttemptAt: nextAttemptAt(epochMs, config, epochMs),
     drives: clone(config.initialDrives),
     lastSatisfiedAt,
     thoughts: [],
@@ -196,6 +197,17 @@ function deterministicUnit(seed) {
   return (hash >>> 0) / 0xffff_ffff;
 }
 
+export function nextAttemptAt(nowMs, config, seedMs = nowMs) {
+  if (!Number.isSafeInteger(nowMs) || nowMs < 0 ||
+      !Number.isSafeInteger(seedMs) || seedMs < 0) {
+    throw new ValidationError('attempt schedule timestamp is invalid', 'CLOCK_ANOMALY');
+  }
+  const span = config.attemptWindowMaxSeconds - config.attemptWindowMinSeconds;
+  const unit = deterministicUnit(`${seedMs}:proactive-attempt-window`);
+  const delaySeconds = config.attemptWindowMinSeconds + Math.floor(unit * (span + 1));
+  return timePair(nowMs + delaySeconds * 1000);
+}
+
 export function selfDriveFactor(nowMs, heartbeatSeconds, drive, variation) {
   const bucket = Math.floor(nowMs / (heartbeatSeconds * 1000));
   const unit = deterministicUnit(`${bucket}:${drive}`);
@@ -232,11 +244,14 @@ export function chooseLibidoIntent(state, config, nowMs) {
 function expressionChoice(state, config, nowMs, candidate) {
   const range = Math.max(Number.EPSILON, 1 - config.triggerThreshold);
   const scoreProgress = clamp((candidate.score - config.triggerThreshold) / range);
-  const willingness = clamp(
+  const unsuppressedWillingness = clamp(
     config.expression.baseWillingness
       + scoreProgress * config.expression.scoreWeight
       + state.drives.attachment * config.expression.attachmentWeight
-      + state.drives.social * config.expression.socialWeight
+      + state.drives.social * config.expression.socialWeight,
+  );
+  const willingness = clamp(
+    unsuppressedWillingness
       - state.drives.fatigue * config.expression.fatiguePenalty
       - state.drives.stress * config.expression.stressPenalty,
   );
@@ -244,7 +259,11 @@ function expressionChoice(state, config, nowMs, candidate) {
   const draw = deterministicUnit(
     `${bucket}:${candidate.drive}:expression:${state.expression.consecutiveWithholds}`,
   );
-  return { willingness, draw };
+  return {
+    willingness,
+    draw,
+    suppressedByFatigueOrStress: draw >= willingness && draw < unsuppressedWillingness,
+  };
 }
 
 function routeCandidate(state, config, nowMs, candidate, { forceContact = false } = {}) {
@@ -434,6 +453,7 @@ export function formDecision(state, config, nowMs, { clockValid = true } = {}) {
         expressed: false,
         willingness: choice.willingness,
         draw: choice.draw,
+        suppressedByFatigueOrStress: choice.suppressedByFatigueOrStress,
         forcedReason: null,
         withholdCount: state.expression.consecutiveWithholds,
       },
@@ -471,13 +491,19 @@ export function formDecision(state, config, nowMs, { clockValid = true } = {}) {
       expressed: true,
       willingness: forcedReason === null ? choice.willingness : 1,
       draw: forcedReason === null ? choice.draw : null,
+      suppressedByFatigueOrStress: false,
       forcedReason,
       withholdCount: state.expression.consecutiveWithholds,
     },
   };
 }
 
-export function tickState(input, config, nowMs = Date.now()) {
+export function tickState(
+  input,
+  config,
+  nowMs = Date.now(),
+  { scheduleAttempts = false } = {},
+) {
   validateState(input, config);
   const state = clone(input);
   const backwardsMs = state.lastTickAt.epochMs - nowMs;
@@ -493,11 +519,38 @@ export function tickState(input, config, nowMs = Date.now()) {
   decayNegativeCauses(state, config, nowMs);
   updateDrivesForElapsed(state, config, elapsedMs, nowMs);
   synchronizeThoughts(state, config, nowMs);
-  const result = formDecision(state, config, nowMs);
+  let attemptOpportunity = true;
+  let decisionEntryExecuted = true;
+  let result;
+  if (scheduleAttempts) {
+    const scheduledAt = state.nextAttemptAt?.epochMs ?? null;
+    attemptOpportunity = scheduledAt !== null && nowMs >= scheduledAt;
+    decisionEntryExecuted = attemptOpportunity;
+    if (scheduledAt === null || attemptOpportunity) {
+      state.nextAttemptAt = nextAttemptAt(nowMs, config, scheduledAt ?? nowMs);
+    }
+  }
+  if (decisionEntryExecuted) {
+    result = formDecision(state, config, nowMs);
+  } else {
+    result = {
+      decision: null,
+      candidate: null,
+      sentinel: null,
+      expression: null,
+    };
+  }
   state.lastTickAt = timePair(nowMs);
   state.updatedAt = timePair(nowMs);
   validateState(state, config);
-  return { state, elapsedSeconds: elapsedMs / 1000, expiredDecision, ...result };
+  return {
+    state,
+    elapsedSeconds: elapsedMs / 1000,
+    expiredDecision,
+    attemptOpportunity,
+    decisionEntryExecuted,
+    ...result,
+  };
 }
 
 export function decideState(input, config, nowMs = Date.now()) {

@@ -6,7 +6,7 @@ umask 077
 readonly MODE=${1:-}
 readonly SCRIPT_DIR="$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")"
 readonly SOURCE_ROOT="$(dirname -- "$SCRIPT_DIR")"
-readonly TARGET_VERSION=0.9.16
+readonly TARGET_VERSION=0.9.17
 readonly ROLLBACK_SCRIPT="$SCRIPT_DIR/rollback-active-production-upgrade.sh"
 
 TEST_MODE=false
@@ -50,10 +50,17 @@ STAGE=initialization
 ATTEMPT=
 ROLLBACK_READY=false
 TEMP_ROOT=
+FAILURE_CLASS=
+
+print_failure() {
+  printf 'ACTIVE_UPGRADE=FAIL\nstage=%s\n' "$STAGE" >&4
+  [[ -z $FAILURE_CLASS ]] || printf 'failure_class=%s\n' "$FAILURE_CLASS" >&4
+}
 
 fail() {
   trap - ERR EXIT INT TERM
-  printf 'ACTIVE_UPGRADE=FAIL\nstage=%s\n' "$STAGE" >&4
+  FAILURE_CLASS=${1:-$FAILURE_CLASS}
+  print_failure
   rm -f -- "$DIAGNOSTIC_LOG"
   exit 1
 }
@@ -71,11 +78,15 @@ install_owned() {
 checkpoint() {
   if [[ $TEST_MODE == true && ${ARU_ACTIVE_UPGRADE_FAIL_STAGE:-} == "$1" ]]; then return 97; fi
 }
+systemd_unit_equivalent() {
+  node "$SCRIPT_DIR/active-production-upgrade-preflight.mjs" \
+    --compare-systemd-unit "$1" "$2"
+}
 handle_error() {
   local status=$?
   trap - ERR EXIT INT TERM
   set +e
-  printf 'ACTIVE_UPGRADE=FAIL\nstage=%s\n' "$STAGE" >&4
+  print_failure
   if [[ $ROLLBACK_READY == true ]]; then
     if "$ROLLBACK_SCRIPT" --automatic "$ATTEMPT" \
         >"$ATTEMPT/automatic-rollback.log" 2>&1; then
@@ -114,20 +125,44 @@ node -e '
   "$(id -g aru-desire 2>/dev/null || id -g)" \
   "$([[ $TEST_MODE == false ]] && printf true || printf false)" "$PREFLIGHT_OPTIONS"
 STAGE=preflight
-PREFLIGHT_OUTPUT="$(node "$SCRIPT_DIR/active-production-upgrade-preflight.mjs" "$PREFLIGHT_OPTIONS")"
-grep -qx 'ACTIVE_UPGRADE_PREFLIGHT=PASS' <<< "$PREFLIGHT_OUTPUT" || fail
+if ! PREFLIGHT_OUTPUT="$(node "$SCRIPT_DIR/active-production-upgrade-preflight.mjs" "$PREFLIGHT_OPTIONS")"; then
+  FAILURE_CLASS="$(sed -n 's/^failure_class=//p' <<< "$PREFLIGHT_OUTPUT")"
+  case $FAILURE_CLASS in
+    source_package_file|installed_package_file|target_version|installed_version|already_installed|\
+    source_manifest|formal_layout|heartbeat_config_file|delivery_config_file|\
+    runtime_primary_file|runtime_interaction_file|heartbeat_config_schema|\
+    delivery_config_schema|runtime_primary_schema|runtime_interaction_schema|\
+    runtime_not_idle|production_gates|delivery_binding|delivery_auth_file|\
+    delivery_marker_file|delivery_marker_content|release_identity) ;;
+    *) FAILURE_CLASS=internal_preflight_failed ;;
+  esac
+  fail
+fi
+grep -qx 'ACTIVE_UPGRADE_PREFLIGHT=PASS' <<< "$PREFLIGHT_OUTPUT" || fail internal_preflight_output
 OLD_VERSION="$(sed -n 's/^old_version=//p' <<< "$PREFLIGHT_OUTPUT")"
-[[ $OLD_VERSION == 0.9.14 || $OLD_VERSION == 0.9.15 ]] || fail
-[[ "$("$SYSTEMCTL_BIN" is-enabled "$TIMER" 2>/dev/null || true)" == enabled ]] || fail
-[[ "$("$SYSTEMCTL_BIN" is-active "$TIMER" 2>/dev/null || true)" == active ]] || fail
-[[ "$("$SYSTEMCTL_BIN" is-active "$HEARTBEAT" 2>/dev/null || true)" == inactive ]] || fail
+[[ $OLD_VERSION == 0.9.14 || $OLD_VERSION == 0.9.15 || $OLD_VERSION == 0.9.16 ]] || \
+  fail installed_version
+[[ "$("$SYSTEMCTL_BIN" is-enabled "$TIMER" 2>/dev/null || true)" == enabled ]] || \
+  fail timer_not_enabled
+[[ "$("$SYSTEMCTL_BIN" is-active "$TIMER" 2>/dev/null || true)" == active ]] || \
+  fail timer_not_active
+[[ "$("$SYSTEMCTL_BIN" is-active "$HEARTBEAT" 2>/dev/null || true)" == inactive ]] || \
+  fail heartbeat_not_inactive
 for unit in "$HEARTBEAT" "$TIMER" "$RECEIVER" "$DASHBOARD"; do
-  [[ -f $UNIT_DIR/$unit && ! -L $UNIT_DIR/$unit ]] || fail
-  cmp -s -- "$SOURCE_ROOT/systemd/$unit" "$UNIT_DIR/$unit" || fail
+  case $unit in
+    "$HEARTBEAT") unit_class=heartbeat ;;
+    "$TIMER") unit_class=timer ;;
+    "$RECEIVER") unit_class=receiver ;;
+    "$DASHBOARD") unit_class=dashboard ;;
+  esac
+  [[ -f $UNIT_DIR/$unit && ! -L $UNIT_DIR/$unit ]] || fail "${unit_class}_unit_file_unsafe"
+  systemd_unit_equivalent "$SOURCE_ROOT/systemd/$unit" "$UNIT_DIR/$unit" || \
+    fail "${unit_class}_unit_content_mismatch"
 done
 cmp -s -- "$SOURCE_ROOT/systemd/aru-selfhost-desire-turn-hook.conf" \
-  "$UNIT_DIR/aru-selfhost.service.d/desire-turn-hook.conf" || fail
+  "$UNIT_DIR/aru-selfhost.service.d/desire-turn-hook.conf" || fail selfhost_dropin_mismatch
 
+FAILURE_CLASS=
 STAGE=backup
 if [[ -e $BACKUP_PARENT || -L $BACKUP_PARENT ]]; then
   [[ -d $BACKUP_PARENT && ! -L $BACKUP_PARENT ]] || fail
@@ -188,9 +223,17 @@ for unit in "$HEARTBEAT" "$RECEIVER" "$ARU"; do
 done
 sha256sum -c --quiet "$ATTEMPT/protected-state.sha256"
 STAGE=quiesced_preflight
-QUIESCED_PREFLIGHT="$(node "$SCRIPT_DIR/active-production-upgrade-preflight.mjs" \
-  "$PREFLIGHT_OPTIONS")"
-grep -qx 'ACTIVE_UPGRADE_PREFLIGHT=PASS' <<< "$QUIESCED_PREFLIGHT"
+if ! QUIESCED_PREFLIGHT="$(node "$SCRIPT_DIR/active-production-upgrade-preflight.mjs" \
+  "$PREFLIGHT_OPTIONS")"; then
+  FAILURE_CLASS="$(sed -n 's/^failure_class=//p' <<< "$QUIESCED_PREFLIGHT")"
+  [[ $FAILURE_CLASS =~ ^[a-z0-9_]+$ ]] || FAILURE_CLASS=internal_preflight_failed
+  false
+fi
+grep -qx 'ACTIVE_UPGRADE_PREFLIGHT=PASS' <<< "$QUIESCED_PREFLIGHT" || {
+  FAILURE_CLASS=internal_preflight_output
+  false
+}
+FAILURE_CLASS=
 printf 'phase=quiesced\n' > "$ATTEMPT/status"
 checkpoint after_quiesce
 

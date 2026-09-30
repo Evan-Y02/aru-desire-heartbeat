@@ -1,5 +1,33 @@
 # Release inventory
 
+## 0.9.17
+
+Version 0.9.17 preserves the v0.9.16 active-production transaction and adds
+fixed privacy-safe classifications to every preflight failure path. Systemd
+unit comparison now accepts only LF/CRLF form, a missing final newline, and
+trailing whitespace-only lines. All nonblank lines stay byte-exact, so changed
+commands, paths, parameters, permissions, users, environment, sections, or any
+other effective content still fails closed with the affected unit category.
+Regression fixtures cover exact equality, each accepted EOF variation,
+meaningful content and `ExecStart` drift, private-output exclusion, and zero
+production mutation before backup or service quiesce.
+
+The candidate also adds the previously absent persisted 30–120 minute proactive
+attempt window. Every heartbeat continues elapsed-time evolution, while only a
+due deadline enters new-decision formation. Each due evaluation advances and
+persists the next deadline, including across restart. Cycle output contains only
+the fixed proactive category vocabulary and an opportunity boolean, keeping
+opportunity, eligibility, and successful delivery distinct. A deterministic
+24-hour regression proves that deadlines neither freeze nor repeat one fixed
+interval.
+
+The two generated runtime manifests both derive version 0.9.17 from
+`package.json`, contain the same recursive runtime closure, and must remain
+byte-identical. No generated production manifest is committed.
+
+The v0.9.16 tag and every earlier tag remain immutable. Production remains on
+its separately installed version until v0.9.17 is explicitly installed.
+
 ## 0.9.16
 
 Version 0.9.16 adds the formal active-production upgrade transaction. The new

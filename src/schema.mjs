@@ -67,6 +67,11 @@ export function validateConfig(config) {
     throw new ValidationError('unsupported config schema or version');
   }
   assertInteger(config.heartbeatSeconds, 'config.heartbeatSeconds', 1);
+  assertInteger(config.attemptWindowMinSeconds, 'config.attemptWindowMinSeconds', 1);
+  assertInteger(config.attemptWindowMaxSeconds, 'config.attemptWindowMaxSeconds', 1);
+  if (config.attemptWindowMaxSeconds < config.attemptWindowMinSeconds) {
+    throw new ValidationError('attempt window maximum must not be below minimum');
+  }
   if (typeof config.observeOnly !== 'boolean' || typeof config.deliveryEnabled !== 'boolean' ||
       typeof config.chatStimulusEnabled !== 'boolean' ||
       typeof config.arousalEnabled !== 'boolean' ||
@@ -329,6 +334,7 @@ export function validateState(state, config) {
   assertTimePair(state.updatedAt, 'state.updatedAt');
   assertTimePair(state.lastTickAt, 'state.lastTickAt');
   assertTimePair(state.lastDecisionAt, 'state.lastDecisionAt', true);
+  assertTimePair(state.nextAttemptAt, 'state.nextAttemptAt', true);
   assertTimePair(state.pendingCooldownUntil, 'state.pendingCooldownUntil', true);
   validateNegativeCauses(state, config);
   assertDriveRecord(state.drives, 'state.drives', assertUnit);

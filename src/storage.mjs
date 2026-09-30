@@ -8,6 +8,8 @@ import { pendingDecisionFingerprint } from './pending-decision.mjs';
 export const STATE_FILE = 'state.json';
 
 const SAFE_FEATURE_DEFAULTS = Object.freeze({
+  attemptWindowMinSeconds: 1800,
+  attemptWindowMaxSeconds: 7200,
   chatStimulusEnabled: false,
   arousalEnabled: false,
   arousalDriveSettlementEnabled: false,
@@ -45,6 +47,8 @@ const SAFE_FEATURE_DEFAULTS = Object.freeze({
 });
 
 function normalizeConfig(config) {
+  config.attemptWindowMinSeconds ??= SAFE_FEATURE_DEFAULTS.attemptWindowMinSeconds;
+  config.attemptWindowMaxSeconds ??= SAFE_FEATURE_DEFAULTS.attemptWindowMaxSeconds;
   for (const key of [
     'chatStimulusEnabled', 'arousalEnabled', 'arousalDriveSettlementEnabled',
     'soloSessionsEnabled',
@@ -62,6 +66,7 @@ function normalizeConfig(config) {
 }
 
 function normalizeState(state, config) {
+  state.nextAttemptAt ??= null;
   if (state.solo === undefined) {
     state.solo = {
       count: 0,

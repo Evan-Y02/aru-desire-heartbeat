@@ -42,6 +42,21 @@ preconditions remain fail-closed, while active upgrades adapt those conditions
 inside one tested transaction rather than requiring operators to hand-compose
 gate changes.
 
+The v0.9.17 active-upgrade preflight treats only LF/CRLF representation, a
+missing final newline, and trailing whitespace-only lines as equivalent in
+systemd units. It does not trim or reinterpret a nonblank line. Commands,
+paths, parameters, permissions, users, environment assignments, sections, and
+all other effective content therefore remain exact fail-closed boundaries.
+Every preflight rejection emits only a fixed non-sensitive category and occurs
+before the transaction creates a backup or quiesces a writer.
+
+The v0.9.17 heartbeat path also persists a 30–120 minute proactive-attempt
+deadline independently of this turn hook. Ten-minute heartbeats continue time
+evolution, and only a due deadline enters new-decision formation. Journal output
+contains an allowlisted category array and an opportunity boolean, never turn
+text, state values, prompt content, URLs, or credentials. A proactive
+opportunity, an eligible decision, and a delivered wake are distinct events.
+
 Production Aru, receiver, and heartbeat writers are quiesced, but the installer
 never opens, copies, parses, hashes, creates, migrates, or writes production
 Desire or interaction state. The production state filenames are deliberately

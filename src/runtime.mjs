@@ -5,7 +5,11 @@ import {
   satisfySoloDecision,
   tickState,
 } from './engine.mjs';
-import { SOLO_INTENT } from './constants.mjs';
+import {
+  PROACTIVE_CATEGORIES,
+  SOLO_INTENT,
+  TIMELINE_OUTCOMES,
+} from './constants.mjs';
 import { atomicSaveState, loadState } from './storage.mjs';
 import { withLock } from './security.mjs';
 import {
@@ -14,6 +18,55 @@ import {
   finishLatestTimeline,
   timelineEntryChanged,
 } from './timeline.mjs';
+
+const PROACTIVE_CATEGORY_SET = new Set(PROACTIVE_CATEGORIES);
+
+function fixedCategories(...values) {
+  return [...new Set(values.flat().filter((value) =>
+    PROACTIVE_CATEGORY_SET.has(value)))];
+}
+
+export function classifyHeartbeatTick(tick) {
+  if (tick.expiredDecision !== null) return ['cooldown_or_refractory'];
+  if (tick.state.pendingDecision !== null && tick.decision === null) {
+    return ['pending_decision'];
+  }
+  if (tick.decisionEntryExecuted !== true) return ['scheduled_not_due'];
+  const blockers = tick.sentinel?.formationBlockers ?? [];
+  if (blockers.includes('clock-anomaly')) return ['runtime_or_service_error'];
+  if (blockers.includes('pending-decision')) return ['pending_decision'];
+  if (blockers.includes('pending-cooldown')) return ['cooldown_or_refractory'];
+  if (blockers.includes('fatigue-gate')) return ['fatigue_or_stress_suppression'];
+  if (blockers.includes('below-trigger-threshold')) return ['threshold_not_met'];
+  if (tick.expression?.expressed === false) {
+    return [tick.expression.suppressedByFatigueOrStress === true
+      ? 'fatigue_or_stress_suppression'
+      : 'random_attempt_not_selected'];
+  }
+  if (tick.decision !== null) return ['eligible'];
+  return ['unknown'];
+}
+
+export function classifyDeliveryFailure(error) {
+  if (error?.code === 'DELIVERY_TIMEOUT') return 'timeout';
+  if (error?.code === 'RECEIVER_UNREACHABLE') return 'receiver_unreachable';
+  if (error?.code === 'DELIVERY_ALREADY_CLAIMED') return 'duplicate_or_receipt';
+  if (error?.code === 'DELIVERY_NOT_ENABLED') return 'delivery_gate';
+  if (error?.code === 'FATIGUE_GATE') return 'fatigue_or_stress_suppression';
+  return 'runtime_or_service_error';
+}
+
+export function privacySafeCycleResult(result) {
+  return {
+    schema: 'aru.desire-heartbeat.cycle-result.v1',
+    status: TIMELINE_OUTCOMES.includes(result?.status) ? result.status : 'idle',
+    categories: fixedCategories(result?.categories ?? 'unknown'),
+    attemptOpportunity: result?.attemptOpportunity === true,
+    elapsedSeconds: Number.isFinite(result?.elapsedSeconds) && result.elapsedSeconds >= 0
+      ? result.elapsedSeconds
+      : 0,
+  };
+}
 
 export async function runHeartbeatCycle({
   dataDirectory,
@@ -24,7 +77,8 @@ export async function runHeartbeatCycle({
 }) {
   return withLock(dataDirectory, async (directory) => {
     const previous = await loadState(directory, heartbeatConfig);
-    const tick = tickState(previous, heartbeatConfig, nowMs);
+    const tick = tickState(previous, heartbeatConfig, nowMs, { scheduleAttempts: true });
+    const categories = classifyHeartbeatTick(tick);
     const pending = tick.state.pendingDecision;
     const isSolo = pending?.intent === SOLO_INTENT;
     const deliveryDisabled = heartbeatConfig.observeOnly ||
@@ -82,6 +136,8 @@ export async function runHeartbeatCycle({
       await atomicSaveState(directory, tick.state, heartbeatConfig);
       return {
         status,
+        categories: fixedCategories(categories, 'eligible'),
+        attemptOpportunity: tick.attemptOpportunity,
         state: tick.state,
         elapsedSeconds: tick.elapsedSeconds,
         decisionId: pending.id,
@@ -97,6 +153,8 @@ export async function runHeartbeatCycle({
       await atomicSaveState(directory, completed, heartbeatConfig);
       return {
         status,
+        categories: fixedCategories(categories, 'eligible'),
+        attemptOpportunity: tick.attemptOpportunity,
         state: completed,
         elapsedSeconds: tick.elapsedSeconds,
         decisionId: pending.id,
@@ -110,6 +168,8 @@ export async function runHeartbeatCycle({
     if (!pending) {
       return {
         status,
+        categories,
+        attemptOpportunity: tick.attemptOpportunity,
         state: tick.state,
         elapsedSeconds: tick.elapsedSeconds,
         candidate: tick.candidate,
@@ -119,6 +179,8 @@ export async function runHeartbeatCycle({
     if (actionDisabled) {
       return {
         status,
+        categories: fixedCategories(categories, 'delivery_gate'),
+        attemptOpportunity: tick.attemptOpportunity,
         state: tick.state,
         elapsedSeconds: tick.elapsedSeconds,
         decisionId: pending.id,
@@ -139,6 +201,8 @@ export async function runHeartbeatCycle({
       await atomicSaveState(directory, delivery.state, heartbeatConfig);
       return {
         status: 'submitted',
+        categories: fixedCategories(categories, 'eligible', 'delivered'),
+        attemptOpportunity: tick.attemptOpportunity,
         state: delivery.state,
         elapsedSeconds: tick.elapsedSeconds,
         decisionId: delivery.decisionId,
@@ -153,6 +217,8 @@ export async function runHeartbeatCycle({
         await atomicSaveState(directory, tick.state, heartbeatConfig);
         return {
           status: 'held_claimed',
+          categories: fixedCategories(categories, 'eligible', 'duplicate_or_receipt'),
+          attemptOpportunity: tick.attemptOpportunity,
           state: tick.state,
           elapsedSeconds: tick.elapsedSeconds,
           decisionId: pending.id,
@@ -161,6 +227,12 @@ export async function runHeartbeatCycle({
       }
       finishLatestTimeline(tick.state, nowMs, 'delivery_failed', ['delivery-failed']);
       await atomicSaveState(directory, tick.state, heartbeatConfig);
+      error.proactiveCategories = fixedCategories(
+        categories,
+        'eligible',
+        classifyDeliveryFailure(error),
+      );
+      error.attemptOpportunity = tick.attemptOpportunity;
       throw error;
     }
   });

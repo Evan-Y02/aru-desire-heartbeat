@@ -156,7 +156,7 @@ node -e 'const fs=require("fs"),n=JSON.parse(fs.readFileSync(process.argv[1])),o
 manifest="\$(node "\$target/scripts/runtime-release-manifest.mjs" create "\$target")"
 printf '%s\\n' "\$manifest" > "\$target/release-manifest.json"
 stamp=fixture
-new_release="\$prefix/opt/aru-selfhost/releases/v0.9.16-\$stamp"
+new_release="\$prefix/opt/aru-selfhost/releases/v0.9.17-\$stamp"
 rm -rf "\$new_release"; mkdir -p "\$new_release"
 cp "\$target/release-manifest.json" "\$new_release/release-manifest.json"
 printf '// upgraded release\\n' > "\$new_release/server.mjs"
@@ -220,7 +220,7 @@ test('active production upgrade succeeds, is repeat-safe, and explicitly rolls b
     const result = await runUpgrade(fixture, healthUrl);
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stdout, /^ACTIVE_UPGRADE=PASS$/mu);
-    assert.match(result.stdout, /^new_version=0\.9\.16$/mu);
+    assert.match(result.stdout, /^new_version=0\.9\.17$/mu);
     assert.doesNotMatch(result.stdout + result.stderr, /A{16}|message|token|credential/iu);
     assert.deepEqual(await readFile(path.join(fixture.data, 'state.json')), stateBefore);
     assert.deepEqual(await readFile(path.join(fixture.data, 'interaction-state.json')), interactionBefore);
@@ -257,6 +257,84 @@ test('active production upgrade succeeds, is repeat-safe, and explicitly rolls b
   });
 });
 
+test('active preflight accepts a unit differing only by trailing blank lines', async () => {
+  await withHealthServer(async (healthUrl) => {
+    const fixture = await makeFixture('0.9.14');
+    const unit = path.join(fixture.root, 'etc/systemd/system/aru-desire-heartbeat.service');
+    await writeFile(unit, `${await readFile(unit, 'utf8')}\n \t\n\n`);
+    const result = await runUpgrade(fixture, healthUrl);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /^ACTIVE_UPGRADE=PASS$/mu);
+  });
+});
+
+test('active preflight accepts CRLF line endings and a missing final newline', async () => {
+  await withHealthServer(async (healthUrl) => {
+    for (const transform of [
+      (value) => value.replaceAll('\n', '\r\n'),
+      (value) => value.replace(/\n$/u, ''),
+    ]) {
+      const fixture = await makeFixture('0.9.14');
+      const unit = path.join(fixture.root, 'etc/systemd/system/aru-desire-heartbeat.service');
+      await writeFile(unit, transform(await readFile(unit, 'utf8')));
+      const result = await runUpgrade(fixture, healthUrl);
+      assert.equal(result.status, 0, result.stderr);
+      assert.match(result.stdout, /^ACTIVE_UPGRADE=PASS$/mu);
+    }
+  });
+});
+
+test('meaningful unit and ExecStart path drift fail closed before production mutation', async () => {
+  await withHealthServer(async (healthUrl) => {
+    for (const mutate of [
+      (value) => value.replace(
+        'Description=Aru autonomous desire heartbeat',
+        'Description=Aru autonomous desire heartbeat changed',
+      ),
+      (value) => value.replace('/usr/bin/node', '/usr/local/bin/node'),
+    ]) {
+      const fixture = await makeFixture('0.9.14');
+      const unit = path.join(fixture.root, 'etc/systemd/system/aru-desire-heartbeat.service');
+      const heartbeatConfig = path.join(fixture.heartbeat, 'config/default.json');
+      const deliveryConfig = path.join(fixture.heartbeat, 'config/aru-delivery.json');
+      const marker = path.join(
+        fixture.root, 'etc/aru-desire-heartbeat/external-trigger.enable',
+      );
+      const originalUnit = await readFile(unit, 'utf8');
+      const unitBefore = mutate(originalUnit);
+      assert.notEqual(unitBefore, originalUnit);
+      await writeFile(unit, unitBefore);
+      const before = await Promise.all([
+        readFile(path.join(fixture.heartbeat, 'package.json')),
+        readFile(heartbeatConfig), readFile(deliveryConfig), readFile(marker),
+        readFile(path.join(fixture.data, 'state.json')),
+        readFile(path.join(fixture.data, 'interaction-state.json')),
+      ]);
+      const result = await runUpgrade(fixture, healthUrl);
+      assert.notEqual(result.status, 0);
+      assert.equal(result.stdout, '');
+      assert.equal(result.stderr,
+        'ACTIVE_UPGRADE=FAIL\nstage=preflight\n' +
+        'failure_class=heartbeat_unit_content_mismatch\n');
+      assert.doesNotMatch(result.stderr, /A{16}|message|token|credential|https?:\/\//iu);
+      assert.deepEqual(await Promise.all([
+        readFile(path.join(fixture.heartbeat, 'package.json')),
+        readFile(heartbeatConfig), readFile(deliveryConfig), readFile(marker),
+        readFile(path.join(fixture.data, 'state.json')),
+        readFile(path.join(fixture.data, 'interaction-state.json')),
+      ]), before);
+      assert.equal(await readFile(unit, 'utf8'), unitBefore);
+      await assert.rejects(() => readFile(path.join(
+        fixture.root, 'var/backups/aru-desire-active-upgrades',
+      )));
+      assert.equal((await readFile(path.join(fixture.stateDir,
+        'aru-desire-heartbeat.timer.active'), 'utf8')).trim(), 'active');
+      assert.equal((await readFile(path.join(fixture.stateDir,
+        'aru-desire-heartbeat.service.active'), 'utf8')).trim(), 'inactive');
+    }
+  });
+});
+
 test('every active-upgrade critical failure restores the exact old snapshot', async () => {
   await withHealthServer(async (healthUrl) => {
     for (const stage of [
@@ -287,10 +365,12 @@ test('every active-upgrade critical failure restores the exact old snapshot', as
   });
 });
 
-test('v0.9.15 is accepted as a compatible old release and unsupported versions fail closed', async () => {
+test('v0.9.15 and v0.9.16 are accepted and unsupported versions fail closed', async () => {
   await withHealthServer(async (healthUrl) => {
     const compatible = await makeFixture('0.9.15');
     assert.equal((await runUpgrade(compatible, healthUrl)).status, 0);
+    const latestCompatible = await makeFixture('0.9.16');
+    assert.equal((await runUpgrade(latestCompatible, healthUrl)).status, 0);
     const unsupported = await makeFixture('0.9.13');
     const before = await readFile(path.join(unsupported.heartbeat, 'package.json'));
     const result = await runUpgrade(unsupported, healthUrl);

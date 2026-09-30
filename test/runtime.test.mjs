@@ -6,13 +6,21 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { deliveryEnableMagic } from '../delivery/aru-adapter.mjs';
 import { createInitialState } from '../src/engine.mjs';
-import { runHeartbeatCycle } from '../src/runtime.mjs';
+import {
+  classifyDeliveryFailure,
+  classifyHeartbeatTick,
+  privacySafeCycleResult,
+  runHeartbeatCycle,
+} from '../src/runtime.mjs';
 import { validateState } from '../src/schema.mjs';
 import { appendTimeline } from '../src/timeline.mjs';
+import { PROACTIVE_CATEGORIES } from '../src/constants.mjs';
 import { initializeState, loadConfig, loadState } from '../src/storage.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const baseConfig = await loadConfig(path.join(ROOT, 'config', 'default.json'));
+baseConfig.attemptWindowMinSeconds = baseConfig.heartbeatSeconds;
+baseConfig.attemptWindowMaxSeconds = baseConfig.heartbeatSeconds;
 const NOW = Date.parse('2026-09-10T04:00:00.000Z');
 const temporaryDirectories = [];
 
@@ -60,6 +68,10 @@ async function authorize(config) {
 }
 async function initial(directory, config, values = {}) {
   const state = createInitialState(config, NOW);
+  state.nextAttemptAt = {
+    epochMs: NOW + config.heartbeatSeconds * 1000,
+    iso: new Date(NOW + config.heartbeatSeconds * 1000).toISOString(),
+  };
   Object.assign(state.drives, values);
   await initializeState(directory, state, config);
   return state;
@@ -76,6 +88,8 @@ test('an idle cycle only advances persisted state', async () => {
     nowMs: NOW + 600_000,
   });
   assert.equal(result.status, 'idle');
+  assert.deepEqual(result.categories, ['threshold_not_met']);
+  assert.equal(result.attemptOpportunity, true);
   const saved = await loadState(directory, baseConfig);
   assert.equal(saved.lastTickAt.epochMs, NOW + 600_000);
   assert.equal(saved.timeline.length, 0);
@@ -94,6 +108,7 @@ test('disabled delivery holds a durable pending decision', async () => {
     nowMs: NOW + 600_000,
   });
   assert.equal(result.status, 'held_disabled');
+  assert.deepEqual(result.categories, ['eligible', 'delivery_gate']);
   const saved = await loadState(directory, heartbeatConfig);
   assert.equal(saved.pendingDecision.id, result.decisionId);
   assert.equal(saved.timeline[0].outcome, 'held_disabled');
@@ -259,8 +274,13 @@ test('logical expiry survives restart and delayed heartbeat observation without 
   const cooldownEnd = afterObservation.pendingCooldownUntil.epochMs;
   const stillCooling = await runAt(cooldownEnd - 1);
   assert.equal(stillCooling.status, 'idle');
-  assert.equal((await loadState(directory, heartbeatConfig)).pendingDecision, null);
-  const replacement = await runAt(cooldownEnd);
+  const beforeReplacement = await loadState(directory, heartbeatConfig);
+  assert.equal(beforeReplacement.pendingDecision, null);
+  const replacementAt = Math.max(
+    cooldownEnd,
+    beforeReplacement.nextAttemptAt.epochMs,
+  );
+  const replacement = await runAt(replacementAt);
   const final = await loadState(directory, heartbeatConfig);
   assert.equal(replacement.status, 'held_disabled');
   assert.notEqual(final.pendingDecision.fingerprint, fingerprint);
@@ -285,6 +305,8 @@ test('enabled cycle submits once and satisfies the desire', async () => {
     nowMs: NOW + 600_000,
   });
   assert.equal(result.status, 'submitted');
+  assert.deepEqual(result.categories, ['eligible', 'delivered']);
+  assert.equal(result.attemptOpportunity, true);
   assert.equal(calls, 1);
   const saved = await loadState(directory, heartbeatConfig);
   assert.equal(saved.pendingDecision, null);
@@ -292,6 +314,114 @@ test('enabled cycle submits once and satisfies the desire', async () => {
   assert.ok(saved.drives.attachment > 0);
   assert.equal(saved.timeline[0].outcome, 'submitted');
   assert.equal(saved.timeline[0].reasons.includes('delivery-accepted'), true);
+});
+
+test('fixed proactive classifications separate scheduling, selection, and failures', async () => {
+  assert.deepEqual(PROACTIVE_CATEGORIES, [
+    'scheduled_not_due',
+    'random_attempt_not_selected',
+    'threshold_not_met',
+    'cooldown_or_refractory',
+    'fatigue_or_stress_suppression',
+    'pending_decision',
+    'duplicate_or_receipt',
+    'minimum_interval_or_daily_limit',
+    'delivery_gate',
+    'receiver_unreachable',
+    'timeout',
+    'runtime_or_service_error',
+    'eligible',
+    'delivered',
+    'unknown',
+  ]);
+  const directory = await tempDirectory();
+  const heartbeatConfig = structuredClone(baseConfig);
+  heartbeatConfig.attemptWindowMinSeconds = 1800;
+  heartbeatConfig.attemptWindowMaxSeconds = 7200;
+  await initializeState(directory, createInitialState(heartbeatConfig, NOW), heartbeatConfig);
+  const scheduled = await runHeartbeatCycle({
+    dataDirectory: directory,
+    heartbeatConfig,
+    deliveryConfig: deliveryConfig(directory, false),
+    submitEvent: async () => assert.fail('sender must not run'),
+    nowMs: NOW + 600_000,
+  });
+  assert.equal(scheduled.attemptOpportunity, false);
+  assert.deepEqual(scheduled.categories, ['scheduled_not_due']);
+
+  const state = await loadState(directory, heartbeatConfig);
+  const dueAt = state.nextAttemptAt.epochMs;
+  const threshold = await runHeartbeatCycle({
+    dataDirectory: directory,
+    heartbeatConfig,
+    deliveryConfig: deliveryConfig(directory, false),
+    submitEvent: async () => assert.fail('sender must not run'),
+    nowMs: dueAt,
+  });
+  assert.equal(threshold.attemptOpportunity, true);
+  assert.deepEqual(threshold.categories, ['threshold_not_met']);
+
+  assert.equal(classifyDeliveryFailure({ code: 'DELIVERY_TIMEOUT' }), 'timeout');
+  assert.equal(
+    classifyDeliveryFailure({ code: 'RECEIVER_UNREACHABLE' }),
+    'receiver_unreachable',
+  );
+  assert.equal(
+    classifyDeliveryFailure({ code: 'UNEXPECTED_SAFE_CODE' }),
+    'runtime_or_service_error',
+  );
+
+  const baseTick = {
+    expiredDecision: null,
+    state: { pendingDecision: null },
+    decision: null,
+    decisionEntryExecuted: true,
+    sentinel: { formationBlockers: [] },
+    expression: null,
+  };
+  const cases = [
+    [{ ...baseTick, decisionEntryExecuted: false }, 'scheduled_not_due'],
+    [{ ...baseTick, sentinel: { formationBlockers: ['below-trigger-threshold'] } },
+      'threshold_not_met'],
+    [{ ...baseTick, sentinel: { formationBlockers: ['fatigue-gate'] } },
+      'fatigue_or_stress_suppression'],
+    [{ ...baseTick, sentinel: { formationBlockers: ['pending-cooldown'] } },
+      'cooldown_or_refractory'],
+    [{ ...baseTick, state: { pendingDecision: {} } }, 'pending_decision'],
+    [{ ...baseTick, expression: {
+      expressed: false, suppressedByFatigueOrStress: false,
+    } }, 'random_attempt_not_selected'],
+    [{ ...baseTick, expression: {
+      expressed: false, suppressedByFatigueOrStress: true,
+    } }, 'fatigue_or_stress_suppression'],
+    [{ ...baseTick, decision: {} }, 'eligible'],
+  ];
+  for (const [tick, expected] of cases) {
+    assert.deepEqual(classifyHeartbeatTick(tick), [expected]);
+    assert.notEqual(expected, 'unknown');
+  }
+});
+
+test('cycle journal result exposes only fixed proactive metadata', async () => {
+  const privateMarker = 'private-token-marker-must-not-appear';
+  const parsed = privacySafeCycleResult({
+    status: 'idle',
+    categories: ['threshold_not_met', privateMarker],
+    attemptOpportunity: true,
+    elapsedSeconds: 600,
+    decisionId: privateMarker,
+    intent: privateMarker,
+    state: { privateMarker },
+    message: privateMarker,
+  });
+  assert.deepEqual(Object.keys(parsed).sort(), [
+    'attemptOpportunity', 'categories', 'elapsedSeconds', 'schema', 'status',
+  ]);
+  assert.deepEqual(parsed.categories, ['threshold_not_met']);
+  assert.equal(parsed.attemptOpportunity, true);
+  const serialized = JSON.stringify(parsed);
+  assert.doesNotMatch(serialized, new RegExp(privateMarker, 'u'));
+  assert.doesNotMatch(serialized, /drives|thought|message|prompt|https?:|credential|token/iu);
 });
 
 test('a solo cycle completes locally without calling the sender', async () => {

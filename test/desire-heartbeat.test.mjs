@@ -69,6 +69,44 @@ test('self-drive variation is bounded and reproducible', () => {
   assert.ok(first <= 1 + config.selfDriveVariation);
 });
 
+test('a 24-hour 10-minute simulation advances every persisted 30-120 minute attempt window', () => {
+  const scheduled = structuredClone(config);
+  scheduled.attemptWindowMinSeconds = 1800;
+  scheduled.attemptWindowMaxSeconds = 7200;
+  let state = createInitialState(scheduled, NOW);
+  const deadlines = [state.nextAttemptAt.epochMs];
+  const opportunities = [];
+  let previousDeadline = state.nextAttemptAt.epochMs;
+  assert.ok((previousDeadline - NOW) / 1000 >= scheduled.attemptWindowMinSeconds);
+  assert.ok((previousDeadline - NOW) / 1000 <= scheduled.attemptWindowMaxSeconds);
+
+  for (let index = 1; index <= 24 * 6; index += 1) {
+    const nowMs = NOW + index * scheduled.heartbeatSeconds * 1000;
+    const result = tickState(state, scheduled, nowMs, { scheduleAttempts: true });
+    state = index === 72 ? structuredClone(result.state) : result.state;
+    assert.equal(result.decisionEntryExecuted, result.attemptOpportunity);
+    if (result.attemptOpportunity) opportunities.push(nowMs);
+    if (state.nextAttemptAt.epochMs !== previousDeadline) {
+      const delaySeconds = (state.nextAttemptAt.epochMs - nowMs) / 1000;
+      assert.ok(delaySeconds >= scheduled.attemptWindowMinSeconds);
+      assert.ok(delaySeconds <= scheduled.attemptWindowMaxSeconds);
+      deadlines.push(state.nextAttemptAt.epochMs);
+      previousDeadline = state.nextAttemptAt.epochMs;
+    }
+  }
+
+  assert.ok(opportunities.length >= 12);
+  assert.ok(opportunities.length <= 48);
+  assert.equal(new Set(deadlines).size, deadlines.length);
+  const delays = deadlines.map((deadline, index) => index === 0
+    ? deadline - NOW
+    : deadline - opportunities[index - 1]);
+  assert.ok(new Set(delays).size > 1, 'attempt sampling must not repeat one fixed delay');
+  for (let index = 1; index < opportunities.length; index += 1) {
+    assert.ok(opportunities[index] - opportunities[index - 1] <= 130 * 60 * 1000);
+  }
+});
+
 test('all drives converge away from mechanical zero and one boundaries', () => {
   const ticks = 14 * 24 * 6;
   const fromZero = simulateState(

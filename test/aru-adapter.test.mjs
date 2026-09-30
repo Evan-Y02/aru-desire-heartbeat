@@ -236,6 +236,31 @@ test('ambiguous sender failure leaves an uncertain claim', async () => {
   const attempts = await readdir(path.join(directory, 'delivery-attempts'));
   assert.deepEqual(attempts.map((name) => name.endsWith('.uncertain.json')), [true]);
 });
+
+for (const [senderCode, expectedCode] of [
+  ['ARU_SUBMISSION_TIMEOUT', 'DELIVERY_TIMEOUT'],
+  ['ARU_REQUEST_FAILED', 'RECEIVER_UNREACHABLE'],
+]) {
+  test(`sender ${senderCode} maps to fixed ${expectedCode}`, async () => {
+    const directory = await tempDirectory();
+    const hb = heartbeatConfig();
+    const config = deliveryConfig(directory);
+    await authorize(config);
+    await assert.rejects(deliverPending({
+      state: pendingState(hb),
+      heartbeatConfig: hb,
+      deliveryConfig: config,
+      dataDirectory: directory,
+      submitEvent: async () => {
+        const error = new Error('private transport detail');
+        error.code = senderCode;
+        throw error;
+      },
+      nowMs: NOW + 2,
+    }), (error) => error instanceof DeliveryError && error.code === expectedCode &&
+      !error.message.includes('private transport detail'));
+  });
+}
 test('oversized desire event is rejected before an attempt claim', async () => {
   const directory = await tempDirectory();
   const hb = heartbeatConfig();

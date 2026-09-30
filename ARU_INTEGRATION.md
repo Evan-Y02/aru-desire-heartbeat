@@ -12,8 +12,10 @@ conversation action, real event submission, or model call was performed.
 ## Product decision
 
 The desire system must not recreate the old Polaris fixed-time messages. The user
-does not want scheduled prompts. A heartbeat changes internal state; a desire
-decision may then wake the Aru collaborator at an unscheduled time.
+does not want scheduled prompts. A ten-minute heartbeat always advances internal
+state. A persisted, restart-stable deadline selects a random 30–120 minute
+opportunity to evaluate a new proactive decision; the opportunity does not force
+a message. Only an eligible decision may then wake the Aru collaborator.
 
 The Aru external trigger is the selected integration:
 
@@ -119,3 +121,14 @@ an inactive timer is valid and requires no additional quiesce. Delivery gates an
 the enable file remain unchanged until this preflight and the final pending
 decision check pass. Every later failure closes delivery and restores the prior
 timer and protected-file state, so no half-enabled state remains.
+
+## Active-production upgrade comparison
+
+Version 0.9.17 keeps the active v0.9.16 transaction and adds fixed preflight
+failure categories. Systemd units are equivalent only when differences are
+limited to LF/CRLF form, a missing final newline, or trailing whitespace-only
+lines. Nonblank lines are not trimmed or semantically rewritten: an altered
+command, path, parameter, permission, user, environment assignment, section,
+or other effective value fails closed before backup, quiesce, gate mutation, or
+installation. Failure output contains the category only, never unit contents,
+runtime values, credentials, URLs, or conversation material.

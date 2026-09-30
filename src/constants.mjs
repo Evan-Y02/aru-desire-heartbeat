@@ -22,6 +22,23 @@ export const INTENT_BY_DRIVE = Object.freeze({
 });
 
 export const SOLO_INTENT = 'solo';
+export const PROACTIVE_CATEGORIES = Object.freeze([
+  'scheduled_not_due',
+  'random_attempt_not_selected',
+  'threshold_not_met',
+  'cooldown_or_refractory',
+  'fatigue_or_stress_suppression',
+  'pending_decision',
+  'duplicate_or_receipt',
+  'minimum_interval_or_daily_limit',
+  'delivery_gate',
+  'receiver_unreachable',
+  'timeout',
+  'runtime_or_service_error',
+  'eligible',
+  'delivered',
+  'unknown',
+]);
 export const intentMatchesDrive = (drive, intent) =>
   INTENT_BY_DRIVE[drive] === intent || (drive === 'libido' && intent === SOLO_INTENT);
 

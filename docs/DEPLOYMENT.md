@@ -150,12 +150,25 @@ This stops future cycles and closes delivery while preserving evolved state.
 
 ## 9. Upgrade
 
-For an already enabled v0.9.14 or v0.9.15 production installation, use the
-single transactional entry point from the v0.9.16 checkout:
+For an already enabled v0.9.14, v0.9.15, or v0.9.16 production installation,
+use the single transactional entry point from the v0.9.17 checkout:
 
 ```bash
-sudo /absolute/path/to/v0.9.16/source/scripts/upgrade-active-production-once.sh --apply
+sudo /absolute/path/to/v0.9.17/source/scripts/upgrade-active-production-once.sh --apply
 ```
+
+The v0.9.17 preflight emits a fixed `failure_class`. Its systemd comparison
+accepts LF/CRLF form, a missing final newline, and trailing whitespace-only
+lines, but keeps every nonblank line byte-exact. Any changed command, path,
+parameter, permission, user, environment assignment, unit section, or other
+effective content fails closed before backup creation, production mutation, or
+service quiesce.
+
+After installation, every heartbeat still advances elapsed-time state. New
+proactive decisions enter evaluation only at a persisted deadline sampled 30–120
+minutes ahead. Journal output records fixed non-sensitive categories and whether
+that cycle received an attempt opportunity; `eligible` and `delivered` are
+separate, and no state values or message content are logged.
 
 Do not stop autonomy first and do not invoke
 `install-complete-message-hook-once.sh` directly for an enabled installation.
@@ -171,9 +184,10 @@ The direct complete-message installer remains valid only for initial or already
 disabled maintenance flows that satisfy its fail-closed gate precondition.
 
 Future releases must update the active-production transaction, supported source
-version allowlist, target-version assertion, rollback snapshot schema, and full
-isolated failure matrix together. A first-install script must never be presented
-as an enabled-production upgrade path.
+version allowlist, target-version assertion, both generated runtime manifests,
+rollback snapshot schema, and full isolated failure matrix together. A
+first-install script must never be presented as an enabled-production upgrade
+path.
 
 ## 10. Recovery
 

@@ -2,6 +2,8 @@
   "schema": "aru.desire-heartbeat.config.v2",
   "version": 2,
   "heartbeatSeconds": 600,
+  "attemptWindowMinSeconds": 1800,
+  "attemptWindowMaxSeconds": 7200,
   "observeOnly": true,
   "deliveryEnabled": false,
   "chatStimulusEnabled": false,

@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.9.17
+
+- Add a persisted, restart-stable 30–120 minute proactive-attempt window while
+  continuing elapsed-time drive evolution on every ten-minute heartbeat.
+- Emit only allowlisted proactive categories and an attempt-opportunity boolean,
+  separating a scheduled opportunity, threshold/suppression outcomes,
+  eligibility, delivery, timeout, and receiver failure without logging private
+  state or message content.
+- Add a deterministic 24-hour simulation proving that attempt deadlines keep
+  advancing across restart and that an opportunity is distinct from delivery.
+- Emit a fixed, non-sensitive `failure_class` for every active-production
+  preflight failure instead of reporting only the broad stage.
+- Compare systemd units using a narrow canonical form that accepts LF/CRLF,
+  a missing final newline, and trailing whitespace-only lines while preserving
+  every nonblank line byte-for-byte.
+- Fail closed with an exact unit category when commands, paths, parameters,
+  permissions, users, environment, sections, or any other effective content
+  differs.
+- Add isolated regressions for exact matches, harmless EOF differences,
+  meaningful drift, privacy-safe output, and zero production mutation on
+  preflight failure.
+- Carry package version 0.9.17 into both generated, byte-identical runtime
+  manifests and the guarded active-production installation path.
+
 ## 0.9.16
 
 - Add `upgrade-active-production-once.sh`, a single transactional entry point

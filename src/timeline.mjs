@@ -33,7 +33,7 @@ export function createTimelineEntry(tick, config, nowMs, outcome, extraReasons =
   );
   const delivery = selected.intent === 'solo'
     ? (config.observeOnly ? ['observe-only'] : [])
-    : (tick.sentinel?.deliveryBlockers ?? []);
+    : (tick.sentinel?.deliveryBlockers ?? decision?.deliveryBlockers ?? []);
   return {
     at: timePair(nowMs),
     nextCheckAt: timePair(nowMs + config.heartbeatSeconds * 1000),

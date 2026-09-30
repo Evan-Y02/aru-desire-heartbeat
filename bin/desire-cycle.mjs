@@ -4,9 +4,10 @@ import { fileURLToPath } from 'node:url';
 import { readFile } from 'node:fs/promises';
 import { DeliveryError, validateDeliveryConfig } from '../delivery/aru-adapter.mjs';
 import { submitAruExternalTrigger } from '../delivery/aru-wake-sender.mjs';
-import { runHeartbeatCycle } from '../src/runtime.mjs';
+import { privacySafeCycleResult, runHeartbeatCycle } from '../src/runtime.mjs';
 import { loadConfig } from '../src/storage.mjs';
 import { ValidationError } from '../src/schema.mjs';
+import { PROACTIVE_CATEGORIES } from '../src/constants.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const DEFAULT_HEARTBEAT_CONFIG = path.join(ROOT, 'config', 'default.json');
@@ -51,7 +52,10 @@ function safeError(error) {
     error?.name === 'SecurityError';
   return {
     error: known ? error.code ?? 'VALIDATION_ERROR' : 'INTERNAL_ERROR',
-    message: known ? error.message : 'operation failed',
+    categories: Array.isArray(error?.proactiveCategories)
+      ? error.proactiveCategories.filter((value) => PROACTIVE_CATEGORIES.includes(value))
+      : ['runtime_or_service_error'],
+    attemptOpportunity: error?.attemptOpportunity === true,
   };
 }
 
@@ -69,13 +73,7 @@ try {
     deliveryConfig,
     submitEvent: submitAruExternalTrigger,
   });
-  process.stdout.write(`${JSON.stringify({
-    schema: 'aru.desire-heartbeat.cycle-result.v1',
-    status: result.status,
-    decisionId: result.decisionId ?? null,
-    intent: result.intent ?? null,
-    elapsedSeconds: result.elapsedSeconds,
-  })}\n`);
+  process.stdout.write(`${JSON.stringify(privacySafeCycleResult(result))}\n`);
 } catch (error) {
   process.stderr.write(`${JSON.stringify(safeError(error))}\n`);
   process.exitCode = 1;

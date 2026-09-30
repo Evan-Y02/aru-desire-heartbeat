@@ -19,6 +19,35 @@ The optional Solo Session layer separates autonomous selection from preparation,
 structured action beats, edge, release/no-release completion, and downstream
 settlement. It is also disabled by default. See `SOLO_SESSION_DESIGN.md`.
 
+## 0.9.17 privacy-safe preflight classification
+
+Version 0.9.17 adds a fixed, non-sensitive `failure_class` to failed
+active-production preflights. It identifies the exact check category without
+printing private runtime values, file contents, or URLs, and the regression
+suite proves a real unit-file mismatch exits before backup creation, production
+mutation, or service quiescence. Unit comparison accepts only line-ending form,
+a missing final newline, and trailing whitespace-only line differences. Every
+nonblank line remains byte-exact, so changed commands, paths, parameters,
+permissions, users, environment, sections, or other effective content fail
+closed. Both generated runtime manifests derive version 0.9.17 from
+`package.json` and must remain byte-identical. The v0.9.16 transaction and
+rollback model are otherwise unchanged.
+
+The same release adds a persisted proactive-attempt deadline sampled within a
+30–120 minute window. Every ten-minute heartbeat still advances elapsed-time
+state, but new active decisions are evaluated only when that deadline is due;
+the next deadline is then sampled and persisted before any external side
+effect. A restart therefore retains the same deadline instead of resetting a
+fixed seed or retrying one sample forever. Cycle logs expose only an allowlisted
+category array and an `attemptOpportunity` boolean. They never include drive
+values, state, thoughts, messages, prompts, URLs, or credentials. An `eligible`
+opportunity and a `delivered` message are separate classifications.
+The fixed vocabulary is `scheduled_not_due`, `random_attempt_not_selected`,
+`threshold_not_met`, `cooldown_or_refractory`,
+`fatigue_or_stress_suppression`, `pending_decision`, `duplicate_or_receipt`,
+`minimum_interval_or_daily_limit`, `delivery_gate`, `receiver_unreachable`,
+`timeout`, `runtime_or_service_error`, `eligible`, `delivered`, and `unknown`.
+
 ## 0.9.16 active-production upgrade
 
 Version 0.9.16 introduces `scripts/upgrade-active-production-once.sh --apply`
@@ -271,8 +300,10 @@ loop. Manual thoughts remain supported and are explicitly marked. The sentinel
 checks clock safety, one-pending-intent deduplication, fatigue, threshold,
 observe-only state, and explicit delivery flags.
 
-At 78%, the strongest actionable drive enters a deterministic local expression
-choice: it may contact, choose Solo when libido is eligible, or remain silent.
+At a persisted 30–120 minute attempt opportunity, the strongest actionable
+drive enters a deterministic local expression choice after the regular
+ten-minute heartbeat has advanced elapsed-time state. At 78%, it may contact,
+choose Solo when libido is eligible, or remain silent.
 Silence is a real autonomous choice and does not satisfy or lower any drive. It
 may happen at most three eligible times in a row; the fourth eligible cycle must
 contact the owner. A drive at 100% must also contact immediately. These are
@@ -291,14 +322,11 @@ outlet. Solo remains optional on ordinary eligible cycles, but cannot replace
 the mandatory owner contact at 100% or after three consecutive autonomous
 silences.
 
-There are no fixed quiet hours, daily message quota, minimum interval, maximum
-interval, or fixed cooldown. A successful submission lowers the triggering drive
-and softly lowers the other outbound drives, which prevents an immediate cluster
-without turning desire into a schedule. Current disabled defaults were calibrated
-by offline simulation across several 30-day start times: first contact about
-110–130 minutes, around 13.8 expressed contacts per day, and a 90-minute median
-follow-up gap. These are observations rather than quotas or time promises; rare
-shorter and longer gaps remain possible.
+There are no fixed quiet hours, daily message quota, minimum delivery interval,
+maximum delivery interval, or fixed contact cooldown. The 30–120 minute window
+schedules only an opportunity to evaluate the current state; it does not promise
+or force a message. A successful submission lowers the triggering drive and
+softly lowers the other outbound drives, which prevents an immediate cluster.
 
 ## Read-only private dashboard
 
@@ -330,8 +358,10 @@ refreshing the page calls no model or MCP and consumes no model tokens.
 ## Prepared autonomous cycle
 
 `bin/desire-cycle.mjs` performs one bounded cycle: advance state, persist any
-pending intent, and—only when every explicit gate is enabled—submit it through
-Aru's external-trigger path. The prepared ten-minute timer invokes this command.
+next attempt deadline and pending intent, and—only when every explicit gate is
+enabled—submit it through Aru's external-trigger path. The prepared ten-minute
+timer invokes this command. Its journal result contains only fixed proactive
+categories, the opportunity boolean, status, and bounded timing metadata.
 `bin/desire-deliver.mjs` remains available for controlled recovery or diagnostics.
 
 The adapter turns one pending desire decision into a bounded
