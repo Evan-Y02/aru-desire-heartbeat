@@ -19,6 +19,23 @@ The optional Solo Session layer separates autonomous selection from preparation,
 structured action beats, edge, release/no-release completion, and downstream
 settlement. It is also disabled by default. See `SOLO_SESSION_DESIGN.md`.
 
+## 0.9.19 active-upgrade baseline ordering
+
+Version 0.9.19 fixes the active-production wrapper/installer health-contract
+ordering. The wrapper now completes the full running baseline while the timer,
+receiver, dashboard, and selfhost service still have their expected active
+production states, and stores only the non-sensitive comparison facts in its
+owner-only temporary preflight directory. Only after that PASS does it create
+the rollback snapshot and quiesce writers.
+
+The nested installer is then invoked with an explicit quiesced-state contract:
+the timer, heartbeat, receiver, and selfhost service must be inactive while the
+dashboard remains active. It reuses the already validated baseline instead of
+requiring a stopped service to answer. Real baseline failures remain fail-closed
+before backup or quiesce; all later failures retain exact automatic restoration
+and protected state preservation. Both generated runtime manifests derive
+version 0.9.19 from `package.json`; v0.9.18 and all older tags remain immutable.
+
 ## 0.9.18 legacy active-config migration
 
 Version 0.9.18 fixes the active-production upgrade from genuine v0.9.14,

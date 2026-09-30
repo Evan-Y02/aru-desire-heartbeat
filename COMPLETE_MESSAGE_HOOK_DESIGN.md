@@ -42,6 +42,15 @@ preconditions remain fail-closed, while active upgrades adapt those conditions
 inside one tested transaction rather than requiring operators to hand-compose
 gate changes.
 
+Version 0.9.19 makes that adaptation explicit. The wrapper invokes the
+installer's complete running-health preflight before any backup or quiesce and
+keeps only bounded comparison facts in a mode-0600 temporary snapshot. The
+post-quiesce invocation requires the timer, heartbeat, receiver, and selfhost
+service to be inactive and the dashboard to remain active. It reuses that
+snapshot for later health comparison; it never asks an intentionally stopped
+service to satisfy the running baseline. Real baseline faults still fail before
+mutation, and every later error remains covered by inner and outer rollback.
+
 The v0.9.17 active-upgrade preflight treats only LF/CRLF representation, a
 missing final newline, and trailing whitespace-only lines as equivalent in
 systemd units. It does not trim or reinterpret a nonblank line. Commands,

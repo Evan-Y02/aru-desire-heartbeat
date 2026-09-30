@@ -151,8 +151,36 @@ esac
   const installer = path.join(root, 'fake-installer');
   await executable(installer, `#!/usr/bin/env bash
 set -Eeuo pipefail
-source_root=\$1; prefix=\$2
-[[ \${ARU_ACTIVE_UPGRADE_FAIL_STAGE:-} != installer_internal ]] || exit 91
+mode=\$1; source_root=\$2; prefix=\$3; snapshot=\$4
+state=\$prefix/systemctl-state
+case \$mode in
+  --active-preflight)
+    [[ \$(cat "\$state/aru-desire-heartbeat.timer.enabled") == enabled ]]
+    [[ \$(cat "\$state/aru-desire-heartbeat.timer.active") == active ]]
+    [[ \$(cat "\$state/aru-desire-heartbeat.service.active") == inactive ]]
+    [[ \$(cat "\$state/aru-desire-turn-receiver.service.active") == active ]]
+    [[ \$(cat "\$state/aru-desire-dashboard.service.active") == active ]]
+    [[ \$(cat "\$state/aru-selfhost.service.active") == active ]]
+    [[ \${ARU_ACTIVE_UPGRADE_FAIL_STAGE:-} != running_baseline ]] || exit 88
+    printf 'device_count=1\\nbridge_code=200\\n' > "\$snapshot"
+    chmod 0600 "\$snapshot"
+    printf 'ACTIVE_INSTALL_RUNNING_PREFLIGHT=PASS\\n'
+    exit 0
+    ;;
+  --active-apply-quiesced)
+    [[ \$(cat "\$state/aru-desire-heartbeat.timer.enabled") == enabled ]]
+    [[ \$(cat "\$state/aru-desire-heartbeat.timer.active") == inactive ]]
+    [[ \$(cat "\$state/aru-desire-heartbeat.service.active") == inactive ]]
+    [[ \$(cat "\$state/aru-desire-turn-receiver.service.active") == inactive ]]
+    [[ \$(cat "\$state/aru-desire-dashboard.service.active") == active ]]
+    [[ \$(cat "\$state/aru-selfhost.service.active") == inactive ]]
+    [[ -f \$snapshot && \$(stat -c '%a:%h' "\$snapshot") == 600:1 ]]
+    [[ \$(sed -n 's/^device_count=//p' "\$snapshot") =~ ^[0-9]+$ ]]
+    [[ \$(sed -n 's/^bridge_code=//p' "\$snapshot") =~ ^[0-9]{3}$ ]]
+    [[ \${ARU_ACTIVE_UPGRADE_FAIL_STAGE:-} != installer_internal ]] || exit 91
+    ;;
+  *) exit 64 ;;
+esac
 target="\$prefix/opt/aru-desire-heartbeat"
 old_config="\$(mktemp)"; cp "\$target/config/default.json" "\$old_config"
 listing="\$(node "\$source_root/scripts/verify-runtime-release.mjs" list "\$source_root")"
@@ -165,7 +193,7 @@ node -e 'const fs=require("fs"),n=JSON.parse(fs.readFileSync(process.argv[1])),o
 manifest="\$(node "\$target/scripts/runtime-release-manifest.mjs" create "\$target")"
 printf '%s\\n' "\$manifest" > "\$target/release-manifest.json"
 stamp=fixture
-new_release="\$prefix/opt/aru-selfhost/releases/v0.9.18-\$stamp"
+new_release="\$prefix/opt/aru-selfhost/releases/v0.9.19-\$stamp"
 rm -rf "\$new_release"; mkdir -p "\$new_release"
 cp "\$target/release-manifest.json" "\$new_release/release-manifest.json"
 printf '// upgraded release\\n' > "\$new_release/server.mjs"
@@ -221,6 +249,19 @@ function runUpgrade(fixture, healthUrl, extra = {}) {
   });
 }
 
+test('wrapper orders running baseline before quiesce and uses the quiesced installer contract', async () => {
+  const source = await readFile(UPGRADE, 'utf8');
+  const runningBaseline = source.indexOf('STAGE=running_baseline');
+  const backup = source.indexOf('STAGE=backup');
+  const quiesce = source.indexOf('STAGE=quiesce');
+  const quiescedPreflight = source.indexOf('STAGE=quiesced_preflight');
+  const activeApply = source.indexOf('--active-apply-quiesced');
+  assert.ok(runningBaseline >= 0 && runningBaseline < backup);
+  assert.ok(backup < quiesce && quiesce < quiescedPreflight);
+  assert.ok(quiescedPreflight < activeApply);
+  assert.match(source, /--active-preflight/u);
+});
+
 test('active production upgrade succeeds, is repeat-safe, and explicitly rolls back', async () => {
   await withHealthServer(async (healthUrl) => {
     const fixture = await makeFixture('0.9.14');
@@ -235,7 +276,7 @@ test('active production upgrade succeeds, is repeat-safe, and explicitly rolls b
     const result = await runUpgrade(fixture, healthUrl);
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stdout, /^ACTIVE_UPGRADE=PASS$/mu);
-    assert.match(result.stdout, /^new_version=0\.9\.18$/mu);
+    assert.match(result.stdout, /^new_version=0\.9\.19$/mu);
     assert.doesNotMatch(result.stdout + result.stderr, /A{16}|message|token|credential/iu);
     assert.deepEqual(await readFile(path.join(fixture.data, 'state.json')), stateBefore);
     assert.deepEqual(await readFile(path.join(fixture.data, 'interaction-state.json')), interactionBefore);
@@ -307,6 +348,44 @@ test('legacy config migration accepts absence but rejects a present wrong type b
     )));
     assert.equal((await readFile(path.join(fixture.stateDir,
       'aru-desire-heartbeat.timer.active'), 'utf8')).trim(), 'active');
+  });
+});
+
+test('running baseline failure is fail-closed before backup or quiesce', async () => {
+  await withHealthServer(async (healthUrl) => {
+    const fixture = await makeFixture('0.9.14');
+    const before = await Promise.all([
+      readFile(path.join(fixture.heartbeat, 'package.json')),
+      readFile(path.join(fixture.data, 'state.json')),
+      readFile(path.join(fixture.data, 'interaction-state.json')),
+    ]);
+    const result = await runUpgrade(
+      fixture, healthUrl, { ARU_ACTIVE_UPGRADE_FAIL_STAGE: 'running_baseline' },
+    );
+    assert.notEqual(result.status, 0);
+    assert.equal(result.stdout, '');
+    assert.equal(result.stderr,
+      'ACTIVE_UPGRADE=FAIL\nstage=running_baseline\n' +
+      'failure_class=running_baseline_failed\n');
+    assert.deepEqual(await Promise.all([
+      readFile(path.join(fixture.heartbeat, 'package.json')),
+      readFile(path.join(fixture.data, 'state.json')),
+      readFile(path.join(fixture.data, 'interaction-state.json')),
+    ]), before);
+    await assert.rejects(() => readFile(path.join(
+      fixture.root, 'var/backups/aru-desire-active-upgrades',
+    )));
+    for (const [unit, expected] of [
+      ['aru-desire-heartbeat.timer', 'active'],
+      ['aru-desire-heartbeat.service', 'inactive'],
+      ['aru-desire-turn-receiver.service', 'active'],
+      ['aru-desire-dashboard.service', 'active'],
+      ['aru-selfhost.service', 'active'],
+    ]) {
+      assert.equal((await readFile(path.join(
+        fixture.stateDir, `${unit}.active`,
+      ), 'utf8')).trim(), expected);
+    }
   });
 });
 
@@ -418,14 +497,21 @@ test('every active-upgrade critical failure restores the exact old snapshot', as
   });
 });
 
-test('v0.9.15 through v0.9.17 are accepted and unsupported versions fail closed', async () => {
+test('v0.9.14, v0.9.17, and v0.9.18 sources upgrade compatibly', async () => {
   await withHealthServer(async (healthUrl) => {
-    const compatible = await makeFixture('0.9.15');
-    assert.equal((await runUpgrade(compatible, healthUrl)).status, 0);
-    const latestCompatible = await makeFixture('0.9.16');
-    assert.equal((await runUpgrade(latestCompatible, healthUrl)).status, 0);
-    const currentCompatible = await makeFixture('0.9.17');
-    assert.equal((await runUpgrade(currentCompatible, healthUrl)).status, 0);
+    for (const version of ['0.9.14', '0.9.17', '0.9.18']) {
+      const compatible = await makeFixture(version);
+      assert.equal((await runUpgrade(compatible, healthUrl)).status, 0, version);
+    }
+  });
+});
+
+test('other supported sources remain compatible and unsupported versions fail closed', async () => {
+  await withHealthServer(async (healthUrl) => {
+    for (const version of ['0.9.15', '0.9.16']) {
+      const compatible = await makeFixture(version);
+      assert.equal((await runUpgrade(compatible, healthUrl)).status, 0, version);
+    }
     const unsupported = await makeFixture('0.9.13');
     const before = await readFile(path.join(unsupported.heartbeat, 'package.json'));
     const result = await runUpgrade(unsupported, healthUrl);

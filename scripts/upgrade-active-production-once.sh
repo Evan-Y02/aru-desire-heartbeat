@@ -6,7 +6,7 @@ umask 077
 readonly MODE=${1:-}
 readonly SCRIPT_DIR="$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")"
 readonly SOURCE_ROOT="$(dirname -- "$SCRIPT_DIR")"
-readonly TARGET_VERSION=0.9.18
+readonly TARGET_VERSION=0.9.19
 readonly ROLLBACK_SCRIPT="$SCRIPT_DIR/rollback-active-production-upgrade.sh"
 
 TEST_MODE=false
@@ -111,6 +111,7 @@ done
 
 TEMP_ROOT="$(mktemp -d /tmp/aru-active-upgrade-preflight.XXXXXXXXXXXXXXXX)"
 PREFLIGHT_OPTIONS="$TEMP_ROOT/options.json"
+RUNNING_BASELINE="$TEMP_ROOT/running-baseline"
 node -e '
  const fs=require("fs"); const a=process.argv.slice(1);
  const keys=["sourceRoot","heartbeatRoot","dataRoot","currentLink","releasePrefix",
@@ -141,7 +142,7 @@ fi
 grep -qx 'ACTIVE_UPGRADE_PREFLIGHT=PASS' <<< "$PREFLIGHT_OUTPUT" || fail internal_preflight_output
 OLD_VERSION="$(sed -n 's/^old_version=//p' <<< "$PREFLIGHT_OUTPUT")"
 [[ $OLD_VERSION == 0.9.14 || $OLD_VERSION == 0.9.15 || $OLD_VERSION == 0.9.16 || \
-   $OLD_VERSION == 0.9.17 ]] || \
+   $OLD_VERSION == 0.9.17 || $OLD_VERSION == 0.9.18 ]] || \
   fail installed_version
 [[ "$("$SYSTEMCTL_BIN" is-enabled "$TIMER" 2>/dev/null || true)" == enabled ]] || \
   fail timer_not_enabled
@@ -162,6 +163,23 @@ for unit in "$HEARTBEAT" "$TIMER" "$RECEIVER" "$DASHBOARD"; do
 done
 cmp -s -- "$SOURCE_ROOT/systemd/aru-selfhost-desire-turn-hook.conf" \
   "$UNIT_DIR/aru-selfhost.service.d/desire-turn-hook.conf" || fail selfhost_dropin_mismatch
+
+STAGE=running_baseline
+if [[ $TEST_MODE == true ]]; then
+  if ! "$INSTALLER" --active-preflight "$SOURCE_ROOT" "$ROOT_PREFIX" \
+      "$RUNNING_BASELINE" >"$TEMP_ROOT/running-baseline.log" 2>&1; then
+    fail running_baseline_failed
+  fi
+else
+  if ! "$INSTALLER" --active-preflight "$SOURCE_ROOT" \
+      "$RUNNING_BASELINE" >"$TEMP_ROOT/running-baseline.log" 2>&1; then
+    fail running_baseline_failed
+  fi
+fi
+grep -qx 'ACTIVE_INSTALL_RUNNING_PREFLIGHT=PASS' \
+  "$TEMP_ROOT/running-baseline.log" || fail running_baseline_output
+[[ -f $RUNNING_BASELINE && ! -L $RUNNING_BASELINE && \
+   $(stat -c '%a:%h' "$RUNNING_BASELINE") == 600:1 ]] || fail running_baseline_snapshot
 
 FAILURE_CLASS=
 STAGE=backup
@@ -248,9 +266,11 @@ checkpoint after_safe_gates
 STAGE=install
 printf 'phase=installing\n' > "$ATTEMPT/status"
 if [[ $TEST_MODE == true ]]; then
-  "$INSTALLER" "$SOURCE_ROOT" "$ROOT_PREFIX" >"$ATTEMPT/installer.log" 2>&1
+  "$INSTALLER" --active-apply-quiesced "$SOURCE_ROOT" "$ROOT_PREFIX" \
+    "$RUNNING_BASELINE" >"$ATTEMPT/installer.log" 2>&1
 else
-  "$INSTALLER" "$SOURCE_ROOT" >"$ATTEMPT/installer.log" 2>&1
+  "$INSTALLER" --active-apply-quiesced "$SOURCE_ROOT" \
+    "$RUNNING_BASELINE" >"$ATTEMPT/installer.log" 2>&1
 fi
 checkpoint after_install
 

@@ -124,6 +124,14 @@ timer and protected-file state, so no half-enabled state remains.
 
 ## Active-production upgrade comparison
 
+Version 0.9.19 separates the two health contracts used by an enabled upgrade.
+The complete running baseline executes while the timer, receiver, dashboard,
+and selfhost service are still in their expected production states. Only then
+may the wrapper snapshot and quiesce. The nested installation verifies the
+quiesced state explicitly and carries the bounded pre-quiesce comparison facts
+forward, so an intentionally inactive selfhost service cannot be mistaken for
+a baseline outage. Genuine running-health failures still stop before mutation.
+
 Version 0.9.17 keeps the active v0.9.16 transaction and adds fixed preflight
 failure categories. Systemd units are equivalent only when differences are
 limited to LF/CRLF form, a missing final newline, or trailing whitespace-only

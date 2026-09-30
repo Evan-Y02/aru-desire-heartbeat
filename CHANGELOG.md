@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.9.19
+
+- Run the complete enabled-production baseline health contract before the
+  active-upgrade wrapper quiesces the timer, receiver, or selfhost service.
+- Give the nested installer an explicit quiesced-state contract and reuse the
+  owner-only, non-sensitive pre-quiesce baseline snapshot instead of requiring
+  stopped services to satisfy running-health checks.
+- Preserve fail-closed real baseline faults, exact service/gate/marker restore,
+  protected state and interaction-state hashes, and automatic rollback at every
+  later critical failure stage.
+- Add isolated regression coverage for ordering, active and quiesced service
+  contracts, real baseline failure before mutation, install rollback, repeated
+  execution, and v0.9.14/v0.9.17/v0.9.18 upgrade sources.
+- Carry package version 0.9.19 into both generated, byte-identical runtime
+  manifests and the guarded active-production installation path.
+
 ## 0.9.18
 
 - Accept a genuine enabled v0.9.14–v0.9.16 heartbeat configuration during the

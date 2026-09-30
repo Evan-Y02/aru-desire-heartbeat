@@ -1,5 +1,39 @@
 # Release inventory
 
+## 0.9.19
+
+Version 0.9.19 repairs the deterministic ordering conflict found during the
+v0.9.18 active-production transaction: the wrapper had already quiesced the
+selfhost service before the nested installer attempted its running baseline
+diagnostics. The new transaction completes the full running baseline before
+backup creation or service quiesce and records only bounded, non-sensitive
+comparison facts in its mode-0600 temporary preflight directory.
+
+After quiesce, the nested installer enforces a separate explicit contract: the
+enabled timer is inactive, heartbeat/receiver/selfhost are inactive, and the
+dashboard remains active. It consumes the pre-quiesce baseline rather than
+contacting a stopped service. No health check is deleted or hard-coded; genuine
+baseline failure still stops before mutation. The existing backup, gate and
+marker preservation, exact service restoration, protected state hashes, inner
+rollback, and outer automatic rollback remain in force.
+
+Isolated coverage proves the active ordering, the quiesced contract, fail-closed
+baseline faults, install-stage rollback, byte preservation of state and
+interaction-state, repeated execution, critical failure injection, and
+v0.9.14/v0.9.17/v0.9.18 source compatibility. Both generated manifests derive
+version 0.9.19 from `package.json`, cover the same 31-file runtime closure, and
+must remain byte-identical. No generated production manifest is committed, and
+v0.9.18 and every older tag remain immutable.
+
+The v0.9.19 upgrade and rollback inventory is:
+
+- `scripts/upgrade-active-production-once.sh`
+- `scripts/rollback-active-production-upgrade.sh`
+- `scripts/install-complete-message-hook-once.sh`
+- `scripts/active-production-upgrade-preflight.mjs`
+- `scripts/active-production-upgrade-gates.mjs`
+- `test/active-production-upgrade.test.mjs`
+
 ## 0.9.18
 
 Version 0.9.18 repairs the active-production compatibility boundary exposed by

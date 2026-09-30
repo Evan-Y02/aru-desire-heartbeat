@@ -3,14 +3,31 @@ set -Eeuo pipefail
 umask 077
 
 [[ ${EUID} -eq 0 ]] || { echo 'must run as root' >&2; exit 77; }
-[[ $# -eq 1 ]] || {
-  echo 'usage: install-complete-message-hook-once.sh /absolute/path/to/v0.9.18/source' >&2
-  exit 64
-}
+INSTALL_MODE=standalone
+BASELINE_SNAPSHOT=
+case ${1:-} in
+  --active-preflight|--active-apply-quiesced)
+    [[ $# -eq 3 ]] || {
+      echo 'usage: install-complete-message-hook-once.sh --active-preflight|--active-apply-quiesced SOURCE SNAPSHOT' >&2
+      exit 64
+    }
+    INSTALL_MODE=${1#--}
+    SOURCE_ARGUMENT=$2
+    BASELINE_SNAPSHOT=$3
+    ;;
+  *)
+    [[ $# -eq 1 ]] || {
+      echo 'usage: install-complete-message-hook-once.sh /absolute/path/to/v0.9.19/source' >&2
+      exit 64
+    }
+    SOURCE_ARGUMENT=$1
+    ;;
+esac
+readonly INSTALL_MODE BASELINE_SNAPSHOT SOURCE_ARGUMENT
 
 SCRIPT_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 readonly SCRIPT_ROOT
-SOURCE_ROOT=$(readlink -f -- "$1")
+SOURCE_ROOT=$(readlink -f -- "$SOURCE_ARGUMENT")
 readonly SOURCE_ROOT
 [[ $SOURCE_ROOT == "$SCRIPT_ROOT" ]] || {
   echo 'source root must be the checkout containing this installer' >&2
@@ -22,10 +39,18 @@ process.stdout.write(JSON.parse(fs.readFileSync(process.argv[2], 'utf8')).versio
 NODE
 )
 readonly SOURCE_VERSION
-[[ $SOURCE_VERSION == 0.9.18 ]] || {
-  echo 'installer requires source version 0.9.18' >&2
+[[ $SOURCE_VERSION == 0.9.19 ]] || {
+  echo 'installer requires source version 0.9.19' >&2
   exit 64
 }
+
+if [[ $INSTALL_MODE != standalone ]]; then
+  BASELINE_PARENT=$(dirname -- "$BASELINE_SNAPSHOT")
+  readonly BASELINE_PARENT
+  [[ $BASELINE_SNAPSHOT == /tmp/aru-active-upgrade-preflight.*/* &&
+     -d $BASELINE_PARENT && ! -L $BASELINE_PARENT &&
+     "$(readlink -f -- "$BASELINE_PARENT")" == "$BASELINE_PARENT" ]] || exit 64
+fi
 
 INSTALL_STAGE=initialization
 ROLLBACK_READY=false
@@ -92,15 +117,44 @@ INSTALL_STAGE=baseline_health
 grep -q -F 'startup logs never include credentials' "$OLD_RELEASE/server.mjs"
 ! grep -q -F 'pairingToken: state.pairing.token' "$OLD_RELEASE/server.mjs"
 ! grep -q -F 'console.log(pairingURL)' "$OLD_RELEASE/server.mjs"
-DEVICE_COUNT_BEFORE=$(curl --fail --silent --max-time 2 \
-  http://127.0.0.1:8788/aru/v1/diagnostics | \
-  node -e "let s='';process.stdin.on('data',c=>s+=c).on('end',()=>process.stdout.write(String(JSON.parse(s).deviceCount)))")
-readonly DEVICE_COUNT_BEFORE
-BRIDGE_CODE_BEFORE=$(curl --silent --max-time 2 --output /dev/null --write-out '%{http_code}' \
-  http://127.0.0.1:18110/bridge/v1/health)
-readonly BRIDGE_CODE_BEFORE
+case $INSTALL_MODE in
+  standalone|active-preflight)
+    if [[ $INSTALL_MODE == active-preflight ]]; then
+      INSTALL_STAGE=running_service_baseline
+      [[ $HEARTBEAT_TIMER_WAS_ENABLED == enabled ]]
+      [[ $HEARTBEAT_TIMER_WAS_ACTIVE == active ]]
+      [[ $(systemctl is-active "$HEARTBEAT_SERVICE" || true) == inactive ]]
+      [[ $RECEIVER_WAS_ACTIVE == active ]]
+      [[ $DASHBOARD_WAS_ACTIVE == active ]]
+      [[ $ARU_WAS_ACTIVE == active ]]
+      INSTALL_STAGE=baseline_health
+    fi
+    DEVICE_COUNT_BEFORE=$(curl --fail --silent --max-time 2 \
+      http://127.0.0.1:8788/aru/v1/diagnostics | \
+      node -e "let s='';process.stdin.on('data',c=>s+=c).on('end',()=>process.stdout.write(String(JSON.parse(s).deviceCount)))")
+    BRIDGE_CODE_BEFORE=$(curl --silent --max-time 2 --output /dev/null --write-out '%{http_code}' \
+      http://127.0.0.1:18110/bridge/v1/health)
+    ;;
+  active-apply-quiesced)
+    INSTALL_STAGE=quiesced_contract
+    [[ $HEARTBEAT_TIMER_WAS_ENABLED == enabled ]]
+    [[ $HEARTBEAT_TIMER_WAS_ACTIVE == inactive ]]
+    [[ $(systemctl is-active "$HEARTBEAT_SERVICE" || true) == inactive ]]
+    [[ $RECEIVER_WAS_ACTIVE == inactive ]]
+    [[ $ARU_WAS_ACTIVE == inactive ]]
+    [[ $DASHBOARD_WAS_ACTIVE == active ]]
+    [[ -f $BASELINE_SNAPSHOT && ! -L $BASELINE_SNAPSHOT &&
+       $(stat -c '%a:%h' "$BASELINE_SNAPSHOT") == 600:1 ]]
+    DEVICE_COUNT_BEFORE=$(sed -n 's/^device_count=//p' "$BASELINE_SNAPSHOT")
+    BRIDGE_CODE_BEFORE=$(sed -n 's/^bridge_code=//p' "$BASELINE_SNAPSHOT")
+    [[ $DEVICE_COUNT_BEFORE =~ ^[0-9]+$ && $BRIDGE_CODE_BEFORE =~ ^[0-9]{3}$ ]]
+    INSTALL_STAGE=baseline_health
+    ;;
+esac
+[[ $DEVICE_COUNT_BEFORE =~ ^[0-9]+$ && $BRIDGE_CODE_BEFORE =~ ^[0-9]{3}$ ]]
+readonly DEVICE_COUNT_BEFORE BRIDGE_CODE_BEFORE
 [[ -f $ARU_SECRET && ! -L $ARU_SECRET && -f $DESIRE_SECRET && ! -L $DESIRE_SECRET ]] || {
-  echo 'v0.9.18 safety upgrade requires the existing owner-only hook secret channel' >&2
+  echo 'v0.9.19 safety upgrade requires the existing owner-only hook secret channel' >&2
   exit 73
 }
 [[ $(stat -c '%U:%G:%a:%h' "$ARU_SECRET") == 'aru-selfhost:aru-selfhost:600:1' ]]
@@ -134,6 +188,14 @@ readonly DESIRE_FILES=(
 
 INSTALL_STAGE=isolated_aru_service_identity_preflight
 bash "$SOURCE_ROOT/scripts/test-aru-patched-release-as-service-user.sh" "$SOURCE_ROOT"
+
+if [[ $INSTALL_MODE == active-preflight ]]; then
+  printf 'device_count=%s\nbridge_code=%s\n' \
+    "$DEVICE_COUNT_BEFORE" "$BRIDGE_CODE_BEFORE" > "$BASELINE_SNAPSHOT"
+  chmod 0600 "$BASELINE_SNAPSHOT"
+  printf 'ACTIVE_INSTALL_RUNNING_PREFLIGHT=PASS\n'
+  exit 0
+fi
 
 INSTALL_STAGE=backup
 mkdir -p "$BACKUP/aru" "$BACKUP/desire" "$BACKUP/systemd"

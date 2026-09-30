@@ -174,6 +174,11 @@ test('installer retains fail-closed rollback and never broadens permissions', as
   assert.match(source, /enable_interaction_flags/u);
   assert.match(source, /isolated_aru_service_identity_preflight/u);
   assert.match(source, /test-aru-patched-release-as-service-user\.sh/u);
+  assert.match(source, /--active-preflight\|--active-apply-quiesced/u);
+  assert.match(source, /INSTALL_STAGE=running_service_baseline/u);
+  assert.match(source, /INSTALL_STAGE=quiesced_contract/u);
+  assert.match(source, /HEARTBEAT_TIMER_WAS_ACTIVE == inactive/u);
+  assert.match(source, /ACTIVE_INSTALL_RUNNING_PREFLIGHT=PASS/u);
   assert.match(source, /INSTALL_STAGE=isolated_synthetic_acceptance/u);
   assert.match(source, /test-installed-hook-isolated-state\.sh/u);
   assert.match(source, /env -u ARU_DESIRE_ISOLATED_TEST_MODE/u);
@@ -301,7 +306,7 @@ test('independent runtime manifest covers the exact closure and rejects absence 
   const parsed = JSON.parse(await readFile(manifest, 'utf8'));
   const packageMetadata = JSON.parse(await readFile(path.join(ROOT, 'package.json'), 'utf8'));
   assert.equal(parsed.schema, 'aru.desire-heartbeat.file-manifest.v1');
-  assert.equal(packageMetadata.version, '0.9.18');
+  assert.equal(packageMetadata.version, '0.9.19');
   assert.equal(parsed.version, packageMetadata.version);
   assert.equal(parsed.fileCount, files.length);
   assert.deepEqual(parsed.files.map((file) => file.path), files);
