@@ -6,7 +6,7 @@ umask 077
 readonly MODE=${1:-}
 readonly SCRIPT_DIR="$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")"
 readonly SOURCE_ROOT="$(dirname -- "$SCRIPT_DIR")"
-readonly TARGET_VERSION=0.9.17
+readonly TARGET_VERSION=0.9.18
 readonly ROLLBACK_SCRIPT="$SCRIPT_DIR/rollback-active-production-upgrade.sh"
 
 TEST_MODE=false
@@ -140,7 +140,8 @@ if ! PREFLIGHT_OUTPUT="$(node "$SCRIPT_DIR/active-production-upgrade-preflight.m
 fi
 grep -qx 'ACTIVE_UPGRADE_PREFLIGHT=PASS' <<< "$PREFLIGHT_OUTPUT" || fail internal_preflight_output
 OLD_VERSION="$(sed -n 's/^old_version=//p' <<< "$PREFLIGHT_OUTPUT")"
-[[ $OLD_VERSION == 0.9.14 || $OLD_VERSION == 0.9.15 || $OLD_VERSION == 0.9.16 ]] || \
+[[ $OLD_VERSION == 0.9.14 || $OLD_VERSION == 0.9.15 || $OLD_VERSION == 0.9.16 || \
+   $OLD_VERSION == 0.9.17 ]] || \
   fail installed_version
 [[ "$("$SYSTEMCTL_BIN" is-enabled "$TIMER" 2>/dev/null || true)" == enabled ]] || \
   fail timer_not_enabled

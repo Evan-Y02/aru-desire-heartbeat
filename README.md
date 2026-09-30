@@ -19,6 +19,25 @@ The optional Solo Session layer separates autonomous selection from preparation,
 structured action beats, edge, release/no-release completion, and downstream
 settlement. It is also disabled by default. See `SOLO_SESSION_DESIGN.md`.
 
+## 0.9.18 legacy active-config migration
+
+Version 0.9.18 fixes the active-production upgrade from genuine v0.9.14,
+v0.9.15, and v0.9.16 installations. Those releases predate the persisted
+proactive-attempt scheduler and therefore legitimately lack
+`attemptWindowMinSeconds`, `attemptWindowMaxSeconds`, and state
+`nextAttemptAt`. Preflight now constructs an in-memory, source-version-bound
+compatibility view that supplies 1800/7200 seconds and a null next attempt only
+when the respective legacy fields are absent. It does not write production
+configuration or state during preflight.
+
+An existing field with the wrong type or an invalid value is never replaced,
+and all unrelated schema checks remain fail-closed. The installer then writes
+the complete v0.9.18 default configuration while preserving the six production
+feature gates; protected state remains byte-identical and is normalized by the
+runtime compatibility loader when next used. Both generated runtime manifests
+derive version 0.9.18 from `package.json` and must remain byte-identical. The
+v0.9.17 tag and every earlier tag remain immutable.
+
 ## 0.9.17 privacy-safe preflight classification
 
 Version 0.9.17 adds a fixed, non-sensitive `failure_class` to failed

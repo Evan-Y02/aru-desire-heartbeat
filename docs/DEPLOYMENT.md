@@ -150,19 +150,27 @@ This stops future cycles and closes delivery while preserving evolved state.
 
 ## 9. Upgrade
 
-For an already enabled v0.9.14, v0.9.15, or v0.9.16 production installation,
-use the single transactional entry point from the v0.9.17 checkout:
+For an already enabled v0.9.14, v0.9.15, v0.9.16, or v0.9.17 production
+installation, use the single transactional entry point from the v0.9.18
+checkout:
 
 ```bash
-sudo /absolute/path/to/v0.9.17/source/scripts/upgrade-active-production-once.sh --apply
+sudo /absolute/path/to/v0.9.18/source/scripts/upgrade-active-production-once.sh --apply
 ```
 
-The v0.9.17 preflight emits a fixed `failure_class`. Its systemd comparison
+The v0.9.18 preflight emits a fixed `failure_class`. Its systemd comparison
 accepts LF/CRLF form, a missing final newline, and trailing whitespace-only
 lines, but keeps every nonblank line byte-exact. Any changed command, path,
 parameter, permission, user, environment assignment, unit section, or other
 effective content fails closed before backup creation, production mutation, or
 service quiesce.
+
+For manifest-bound v0.9.14–v0.9.16 installations, preflight supplies the
+attempt-window defaults and null next-attempt field only in its in-memory
+validation view when those later fields are absent. A present field with a
+wrong type or invalid value remains a schema failure. Installation writes the
+complete new config while preserving all six feature gates; protected state is
+not rewritten by this migration.
 
 After installation, every heartbeat still advances elapsed-time state. New
 proactive decisions enter evaluation only at a persisted deadline sampled 30–120

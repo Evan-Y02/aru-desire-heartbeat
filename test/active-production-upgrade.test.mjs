@@ -15,6 +15,7 @@ import { createDeploymentMetadata } from '../scripts/formal-release-layout.mjs';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const UPGRADE = path.join(ROOT, 'scripts/upgrade-active-production-once.sh');
 const ROLLBACK = path.join(ROOT, 'scripts/rollback-active-production-upgrade.sh');
+const LEGACY_ATTEMPT_SCHEDULER_VERSIONS = new Set(['0.9.14', '0.9.15', '0.9.16']);
 const fixtures = [];
 test.after(async () => Promise.all(fixtures.map((item) => rm(item, { recursive: true, force: true }))));
 
@@ -59,6 +60,11 @@ async function makeFixture(oldVersion = '0.9.14') {
     observeOnly: false, deliveryEnabled: true, chatStimulusEnabled: true,
     arousalEnabled: true, arousalDriveSettlementEnabled: true, soloSessionsEnabled: false,
   });
+  const stateConfig = structuredClone(config);
+  if (LEGACY_ATTEMPT_SCHEDULER_VERSIONS.has(oldVersion)) {
+    delete config.attemptWindowMinSeconds;
+    delete config.attemptWindowMaxSeconds;
+  }
   await writeFile(path.join(heartbeat, 'config/default.json'), `${JSON.stringify(config, null, 2)}\n`);
   const delivery = JSON.parse(await readFile(path.join(heartbeat, 'config/aru-delivery.json')));
   delivery.enabled = true;
@@ -66,7 +72,9 @@ async function makeFixture(oldVersion = '0.9.14') {
   delivery.enableFile = path.join(root, 'etc/aru-desire-heartbeat/external-trigger.enable');
   await writeFile(path.join(heartbeat, 'config/aru-delivery.json'), `${JSON.stringify(delivery, null, 2)}\n`);
   const now = Date.now();
-  await writeFile(path.join(data, 'state.json'), `${JSON.stringify(createInitialState(config, now), null, 2)}\n`);
+  const state = createInitialState(stateConfig, now);
+  if (LEGACY_ATTEMPT_SCHEDULER_VERSIONS.has(oldVersion)) delete state.nextAttemptAt;
+  await writeFile(path.join(data, 'state.json'), `${JSON.stringify(state, null, 2)}\n`);
   await writeFile(
     path.join(data, 'interaction-state.json'),
     `${JSON.stringify(createInteractionState(now), null, 2)}\n`,
@@ -152,11 +160,12 @@ while IFS= read -r relative; do
   mkdir -p "\$target/\$(dirname "\$relative")"
   cp "\$source_root/\$relative" "\$target/\$relative"
 done <<< "\$listing"
+cp "\$source_root/config/default.json" "\$target/config/default.json"
 node -e 'const fs=require("fs"),n=JSON.parse(fs.readFileSync(process.argv[1])),o=JSON.parse(fs.readFileSync(process.argv[2])); for(const k of ["observeOnly","deliveryEnabled","chatStimulusEnabled","arousalEnabled","arousalDriveSettlementEnabled","soloSessionsEnabled"]) n[k]=o[k]; fs.writeFileSync(process.argv[1],JSON.stringify(n,null,2)+"\\n")' "\$target/config/default.json" "\$old_config"
 manifest="\$(node "\$target/scripts/runtime-release-manifest.mjs" create "\$target")"
 printf '%s\\n' "\$manifest" > "\$target/release-manifest.json"
 stamp=fixture
-new_release="\$prefix/opt/aru-selfhost/releases/v0.9.17-\$stamp"
+new_release="\$prefix/opt/aru-selfhost/releases/v0.9.18-\$stamp"
 rm -rf "\$new_release"; mkdir -p "\$new_release"
 cp "\$target/release-manifest.json" "\$new_release/release-manifest.json"
 printf '// upgraded release\\n' > "\$new_release/server.mjs"
@@ -217,16 +226,27 @@ test('active production upgrade succeeds, is repeat-safe, and explicitly rolls b
     const fixture = await makeFixture('0.9.14');
     const stateBefore = await readFile(path.join(fixture.data, 'state.json'));
     const interactionBefore = await readFile(path.join(fixture.data, 'interaction-state.json'));
+    const legacyConfig = JSON.parse(await readFile(
+      path.join(fixture.heartbeat, 'config/default.json'), 'utf8',
+    ));
+    assert.equal(Object.hasOwn(legacyConfig, 'attemptWindowMinSeconds'), false);
+    assert.equal(Object.hasOwn(legacyConfig, 'attemptWindowMaxSeconds'), false);
+    assert.equal(Object.hasOwn(JSON.parse(stateBefore), 'nextAttemptAt'), false);
     const result = await runUpgrade(fixture, healthUrl);
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stdout, /^ACTIVE_UPGRADE=PASS$/mu);
-    assert.match(result.stdout, /^new_version=0\.9\.17$/mu);
+    assert.match(result.stdout, /^new_version=0\.9\.18$/mu);
     assert.doesNotMatch(result.stdout + result.stderr, /A{16}|message|token|credential/iu);
     assert.deepEqual(await readFile(path.join(fixture.data, 'state.json')), stateBefore);
     assert.deepEqual(await readFile(path.join(fixture.data, 'interaction-state.json')), interactionBefore);
     assert.equal(JSON.parse(await readFile(
       path.join(fixture.heartbeat, 'config/aru-delivery.json'), 'utf8',
     )).enabled, true);
+    const migratedConfig = JSON.parse(await readFile(
+      path.join(fixture.heartbeat, 'config/default.json'), 'utf8',
+    ));
+    assert.equal(migratedConfig.attemptWindowMinSeconds, 1800);
+    assert.equal(migratedConfig.attemptWindowMaxSeconds, 7200);
     assert.equal((await readFile(path.join(fixture.stateDir,
       'aru-desire-heartbeat.timer.active'), 'utf8')).trim(), 'active');
     const backup = result.stdout.match(/^backup=(.+)$/mu)?.[1];
@@ -254,6 +274,39 @@ test('active production upgrade succeeds, is repeat-safe, and explicitly rolls b
     assert.equal(await readlink(path.join(fixture.root, 'opt/aru-selfhost/current')),
       fixture.oldRelease);
     assert.deepEqual(await readFile(path.join(fixture.data, 'state.json')), stateBefore);
+  });
+});
+
+test('legacy config migration accepts absence but rejects a present wrong type before mutation', async () => {
+  await withHealthServer(async (healthUrl) => {
+    const fixture = await makeFixture('0.9.14');
+    const heartbeatConfig = path.join(fixture.heartbeat, 'config/default.json');
+    const malformed = JSON.parse(await readFile(heartbeatConfig, 'utf8'));
+    malformed.attemptWindowMinSeconds = '1800';
+    await writeFile(heartbeatConfig, `${JSON.stringify(malformed, null, 2)}\n`);
+    const before = await Promise.all([
+      readFile(path.join(fixture.heartbeat, 'package.json')),
+      readFile(heartbeatConfig),
+      readFile(path.join(fixture.data, 'state.json')),
+      readFile(path.join(fixture.data, 'interaction-state.json')),
+    ]);
+    const result = await runUpgrade(fixture, healthUrl);
+    assert.notEqual(result.status, 0);
+    assert.equal(result.stdout, '');
+    assert.equal(result.stderr,
+      'ACTIVE_UPGRADE=FAIL\nstage=preflight\n' +
+      'failure_class=heartbeat_config_schema\n');
+    assert.deepEqual(await Promise.all([
+      readFile(path.join(fixture.heartbeat, 'package.json')),
+      readFile(heartbeatConfig),
+      readFile(path.join(fixture.data, 'state.json')),
+      readFile(path.join(fixture.data, 'interaction-state.json')),
+    ]), before);
+    await assert.rejects(() => readFile(path.join(
+      fixture.root, 'var/backups/aru-desire-active-upgrades',
+    )));
+    assert.equal((await readFile(path.join(fixture.stateDir,
+      'aru-desire-heartbeat.timer.active'), 'utf8')).trim(), 'active');
   });
 });
 
@@ -365,12 +418,14 @@ test('every active-upgrade critical failure restores the exact old snapshot', as
   });
 });
 
-test('v0.9.15 and v0.9.16 are accepted and unsupported versions fail closed', async () => {
+test('v0.9.15 through v0.9.17 are accepted and unsupported versions fail closed', async () => {
   await withHealthServer(async (healthUrl) => {
     const compatible = await makeFixture('0.9.15');
     assert.equal((await runUpgrade(compatible, healthUrl)).status, 0);
     const latestCompatible = await makeFixture('0.9.16');
     assert.equal((await runUpgrade(latestCompatible, healthUrl)).status, 0);
+    const currentCompatible = await makeFixture('0.9.17');
+    assert.equal((await runUpgrade(currentCompatible, healthUrl)).status, 0);
     const unsupported = await makeFixture('0.9.13');
     const before = await readFile(path.join(unsupported.heartbeat, 'package.json'));
     const result = await runUpgrade(unsupported, healthUrl);

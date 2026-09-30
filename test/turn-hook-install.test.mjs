@@ -301,7 +301,7 @@ test('independent runtime manifest covers the exact closure and rejects absence 
   const parsed = JSON.parse(await readFile(manifest, 'utf8'));
   const packageMetadata = JSON.parse(await readFile(path.join(ROOT, 'package.json'), 'utf8'));
   assert.equal(parsed.schema, 'aru.desire-heartbeat.file-manifest.v1');
-  assert.equal(packageMetadata.version, '0.9.17');
+  assert.equal(packageMetadata.version, '0.9.18');
   assert.equal(parsed.version, packageMetadata.version);
   assert.equal(parsed.fileCount, files.length);
   assert.deepEqual(parsed.files.map((file) => file.path), files);

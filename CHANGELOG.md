@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.9.18
+
+- Accept a genuine enabled v0.9.14–v0.9.16 heartbeat configuration during the
+  active-production preflight by supplying the two v0.9.17 attempt-window
+  defaults only when those legacy fields are absent.
+- Apply the matching in-memory compatibility view to the legacy state field
+  `nextAttemptAt`, while keeping the protected production state byte-identical
+  throughout the upgrade transaction.
+- Continue to fail closed when either attempt-window field exists with an
+  invalid type or value, or when any other config or state schema requirement
+  is violated.
+- Replace the false-old-version test fixture with a genuine legacy shape and
+  cover missing-field migration, invalid-type rejection before mutation,
+  automatic rollback, repeated execution, and all supported source versions.
+- Carry package version 0.9.18 into both generated, byte-identical runtime
+  manifests and the guarded active-production installation path.
+
 ## 0.9.17
 
 - Add a persisted, restart-stable 30–120 minute proactive-attempt window while

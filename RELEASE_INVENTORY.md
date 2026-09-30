@@ -1,5 +1,31 @@
 # Release inventory
 
+## 0.9.18
+
+Version 0.9.18 repairs the active-production compatibility boundary exposed by
+a real v0.9.14 installation. The former fixture changed only the package version
+on a current config, so it did not model the absence of the two attempt-window
+fields introduced in v0.9.17. The preflight consequently rejected a legal old
+config as `heartbeat_config_schema` before any production mutation.
+
+The fixed preflight uses the installed, manifest-bound source version to add
+only absent `attemptWindowMinSeconds`, `attemptWindowMaxSeconds`, and
+`nextAttemptAt` fields to an in-memory validation view for v0.9.14–v0.9.16.
+Existing invalid values and every unrelated schema violation still fail closed.
+The transactional installer replaces the old runtime config with the complete
+v0.9.18 config while preserving all six production gates, and protected state
+remains byte-identical.
+
+Regression coverage now uses the actual legacy shape and verifies successful
+missing-field migration, rejection of a present wrong type before backup or
+quiescence, automatic restoration at every critical failure stage, repeat-safe
+execution, and v0.9.14 through v0.9.17 source compatibility.
+
+The two generated runtime manifests both derive version 0.9.18 from
+`package.json`, contain the same recursive runtime closure, and must remain
+byte-identical. No generated production manifest is committed. The v0.9.17 tag
+and every earlier tag remain immutable.
+
 ## 0.9.17
 
 Version 0.9.17 preserves the v0.9.16 active-production transaction and adds

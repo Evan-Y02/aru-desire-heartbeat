@@ -8,8 +8,13 @@ import { validateConfig, validateState } from '../src/schema.mjs';
 import { verifyFormalReleaseLayout } from './formal-release-layout.mjs';
 import { createRuntimeManifest } from './runtime-release-manifest.mjs';
 
-const EXPECTED_TARGET = '0.9.17';
-const SUPPORTED_OLD = new Set(['0.9.14', '0.9.15', '0.9.16']);
+const EXPECTED_TARGET = '0.9.18';
+const SUPPORTED_OLD = new Set(['0.9.14', '0.9.15', '0.9.16', '0.9.17']);
+const LEGACY_ATTEMPT_SCHEDULER_VERSIONS = new Set(['0.9.14', '0.9.15', '0.9.16']);
+const ATTEMPT_WINDOW_DEFAULTS = Object.freeze({
+  attemptWindowMinSeconds: 1800,
+  attemptWindowMaxSeconds: 7200,
+});
 const ENABLE_MAGIC = 'aru-desire-heartbeat-external-trigger-v1\n';
 
 export function normalizeSystemdUnitBytes(value) {
@@ -39,6 +44,25 @@ async function checked(code, operation) {
 
 function requireCheck(condition, code) {
   if (!condition) throw new PreflightFailure(code);
+}
+
+export function normalizeInstalledConfigForUpgrade(config, installedVersion) {
+  const normalized = structuredClone(config);
+  if (LEGACY_ATTEMPT_SCHEDULER_VERSIONS.has(installedVersion)) {
+    for (const [field, value] of Object.entries(ATTEMPT_WINDOW_DEFAULTS)) {
+      if (!Object.hasOwn(normalized, field)) normalized[field] = value;
+    }
+  }
+  return normalized;
+}
+
+export function normalizeInstalledStateForUpgrade(state, installedVersion) {
+  const normalized = structuredClone(state);
+  if (LEGACY_ATTEMPT_SCHEDULER_VERSIONS.has(installedVersion) &&
+      !Object.hasOwn(normalized, 'nextAttemptAt')) {
+    normalized.nextAttemptAt = null;
+  }
+  return normalized;
 }
 
 async function regular(file, label, { mode = null, uid = null, gid = null } = {}) {
@@ -111,15 +135,20 @@ export async function activeUpgradePreflight(options) {
     path.join(options.dataRoot, 'interaction-state.json'), 'interaction state',
     { uid: serviceOwner, gid: serviceGroup, mode: privateMode },
   ));
-  const config = await checked(
-    'heartbeat_config_schema', async () => validateConfig(json(configFile.bytes, 'heartbeat config')),
-  );
+  const config = await checked('heartbeat_config_schema', async () => validateConfig(
+    normalizeInstalledConfigForUpgrade(
+      json(configFile.bytes, 'heartbeat config'), installedPackage.version,
+    ),
+  ));
   const delivery = await checked(
     'delivery_config_schema', async () => validateDeliveryConfig(json(deliveryFile.bytes, 'delivery config')),
   );
-  const state = await checked(
-    'runtime_primary_schema', async () => validateState(json(stateFile.bytes, 'state'), config),
-  );
+  const state = await checked('runtime_primary_schema', async () => validateState(
+    normalizeInstalledStateForUpgrade(
+      json(stateFile.bytes, 'state'), installedPackage.version,
+    ),
+    config,
+  ));
   await checked('runtime_interaction_schema', async () =>
     validateInteractionState(json(interactionFile.bytes, 'interaction state'), config));
   requireCheck(state.pendingDecision === null, 'runtime_not_idle');
