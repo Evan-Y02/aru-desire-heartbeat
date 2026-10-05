@@ -10,7 +10,9 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createInitialState } from '../src/engine.mjs';
 import { createInteractionState } from '../src/interaction-runtime.mjs';
+import { expectedInstalledRuntimeFiles } from '../scripts/active-production-upgrade-preflight.mjs';
 import { createDeploymentMetadata } from '../scripts/formal-release-layout.mjs';
+import { createRuntimeManifestForFiles } from '../scripts/runtime-release-manifest.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const UPGRADE = path.join(ROOT, 'scripts/upgrade-active-production-once.sh');
@@ -44,11 +46,9 @@ async function makeFixture(oldVersion = '0.9.14') {
   ]);
   await chmod(data, 0o700);
 
-  const listing = spawnSync(process.execPath, [
-    path.join(ROOT, 'scripts/verify-runtime-release.mjs'), 'list', ROOT,
-  ], { encoding: 'utf8' });
-  assert.equal(listing.status, 0, listing.stderr);
-  const files = listing.stdout.trim().split('\n');
+  const files = expectedInstalledRuntimeFiles(
+    oldVersion === '0.9.13' ? '0.9.14' : oldVersion,
+  );
   for (const relative of [...files, 'config/default.json', 'config/aru-delivery.json']) {
     const destination = path.join(heartbeat, relative);
     await mkdir(path.dirname(destination), { recursive: true });
@@ -90,11 +90,11 @@ async function makeFixture(oldVersion = '0.9.14') {
     path.join(root, 'etc/aru-desire-heartbeat/external-trigger.enable'),
     'aru-desire-heartbeat-external-trigger-v1\n',
   );
-  const manifestResult = spawnSync(process.execPath, [
-    path.join(heartbeat, 'scripts/runtime-release-manifest.mjs'), 'create', heartbeat,
-  ], { encoding: 'utf8' });
-  assert.equal(manifestResult.status, 0, manifestResult.stderr);
-  await writeFile(path.join(heartbeat, 'release-manifest.json'), manifestResult.stdout);
+  const manifest = await createRuntimeManifestForFiles(heartbeat, files);
+  await writeFile(
+    path.join(heartbeat, 'release-manifest.json'),
+    `${JSON.stringify(manifest, null, 2)}\n`,
+  );
   await copyFile(path.join(heartbeat, 'release-manifest.json'), path.join(oldRelease, 'release-manifest.json'));
   await chmod(path.join(heartbeat, 'release-manifest.json'), 0o644);
   await chmod(path.join(oldRelease, 'release-manifest.json'), 0o644);
@@ -198,7 +198,7 @@ node -e 'const fs=require("fs"),n=JSON.parse(fs.readFileSync(process.argv[1])),o
 manifest="\$(node "\$target/scripts/runtime-release-manifest.mjs" create "\$target")"
 printf '%s\\n' "\$manifest" > "\$target/release-manifest.json"
 stamp=fixture
-new_release="\$prefix/opt/aru-selfhost/releases/v0.9.20-\$stamp"
+new_release="\$prefix/opt/aru-selfhost/releases/v0.9.22-\$stamp"
 rm -rf "\$new_release"; mkdir -p "\$new_release"
 cp "\$target/release-manifest.json" "\$new_release/release-manifest.json"
 printf '// upgraded release\\n' > "\$new_release/server.mjs"
@@ -281,7 +281,7 @@ test('active production upgrade succeeds, is repeat-safe, and explicitly rolls b
     const result = await runUpgrade(fixture, healthUrl);
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stdout, /^ACTIVE_UPGRADE=PASS$/mu);
-    assert.match(result.stdout, /^new_version=0\.9\.20$/mu);
+    assert.match(result.stdout, /^new_version=0\.9\.22$/mu);
     assert.doesNotMatch(result.stdout + result.stderr, /A{16}|message|token|credential/iu);
     assert.deepEqual(await readFile(path.join(fixture.data, 'state.json')), stateBefore);
     assert.deepEqual(await readFile(path.join(fixture.data, 'interaction-state.json')), interactionBefore);
@@ -506,10 +506,45 @@ test('every active-upgrade critical failure restores the exact old snapshot', as
   });
 });
 
-test('v0.9.14, v0.9.17, v0.9.18, and v0.9.19 sources upgrade compatibly', async () => {
+test('legacy layout compatibility still rejects a listed runtime hash mismatch before mutation', async () => {
   await withHealthServer(async (healthUrl) => {
-    for (const version of ['0.9.14', '0.9.17', '0.9.18', '0.9.19']) {
+    const fixture = await makeFixture('0.9.14');
+    const packageBefore = await readFile(path.join(fixture.heartbeat, 'package.json'));
+    await writeFile(
+      path.join(fixture.heartbeat, 'dashboard/public/app.js'),
+      '// manifest mismatch\n',
+    );
+    const result = await runUpgrade(fixture, healthUrl);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /^stage=preflight$/mu);
+    assert.match(result.stderr, /^failure_class=formal_layout$/mu);
+    assert.deepEqual(
+      await readFile(path.join(fixture.heartbeat, 'package.json')),
+      packageBefore,
+    );
+    assert.equal(
+      await stat(path.join(
+        fixture.root, 'var/backups/aru-desire-active-upgrades',
+      )).catch(() => null),
+      null,
+    );
+  });
+});
+
+test('genuine 31-file legacy layouts and the 32-file v0.9.20 upgrade compatibly', async () => {
+  await withHealthServer(async (healthUrl) => {
+    for (const version of ['0.9.14', '0.9.17', '0.9.18', '0.9.19', '0.9.20']) {
       const compatible = await makeFixture(version);
+      const manifest = JSON.parse(await readFile(
+        path.join(compatible.heartbeat, 'release-manifest.json'), 'utf8',
+      ));
+      assert.equal(manifest.fileCount, version === '0.9.20' ? 32 : 31, version);
+      assert.equal(
+        manifest.files.some((file) =>
+          file.path === 'scripts/active-production-postinstall-verify.mjs'),
+        version === '0.9.20',
+        version,
+      );
       const result = await runUpgrade(compatible, healthUrl);
       assert.equal(result.status, 0, `${version}\n${result.stderr}`);
     }

@@ -8,11 +8,58 @@ import { validateConfig, validateState } from '../src/schema.mjs';
 import { verifyFormalReleaseLayout } from './formal-release-layout.mjs';
 import { createRuntimeManifest } from './runtime-release-manifest.mjs';
 
-const EXPECTED_TARGET = '0.9.20';
+const EXPECTED_TARGET = '0.9.22';
 const SUPPORTED_OLD = new Set([
-  '0.9.14', '0.9.15', '0.9.16', '0.9.17', '0.9.18', '0.9.19',
+  '0.9.14', '0.9.15', '0.9.16', '0.9.17', '0.9.18', '0.9.19', '0.9.20',
 ]);
 const LEGACY_ATTEMPT_SCHEDULER_VERSIONS = new Set(['0.9.14', '0.9.15', '0.9.16']);
+const LEGACY_RUNTIME_VERSIONS = new Set([
+  '0.9.14', '0.9.15', '0.9.16', '0.9.17', '0.9.18', '0.9.19',
+]);
+const LEGACY_RUNTIME_FILES = Object.freeze(`
+bin/desire-cycle.mjs
+bin/desire-interaction-init.mjs
+bin/desire-turn-receiver.mjs
+dashboard/public/app.js
+dashboard/public/index.html
+dashboard/public/styles.css
+dashboard/server.py
+delivery/aru-adapter.mjs
+delivery/aru-wake-sender.mjs
+package.json
+scripts/local-import-closure.mjs
+scripts/preserve-feature-flags.mjs
+scripts/runtime-release-manifest.mjs
+scripts/set-interaction-flags.mjs
+scripts/verify-runtime-release.mjs
+scripts/verify-synthetic-ledger.mjs
+src/arousal.mjs
+src/canonical-turn-event.mjs
+src/chat-stimulus.mjs
+src/constants.mjs
+src/engine.mjs
+src/interaction-runtime.mjs
+src/interaction-storage.mjs
+src/pending-decision.mjs
+src/runtime.mjs
+src/schema.mjs
+src/security.mjs
+src/solo-session.mjs
+src/storage.mjs
+src/timeline.mjs
+src/turn-receiver.mjs
+`.trim().split('\n'));
+const V0920_RUNTIME_FILES = Object.freeze([
+  ...LEGACY_RUNTIME_FILES,
+  'scripts/active-production-postinstall-verify.mjs',
+].sort());
+
+export function expectedInstalledRuntimeFiles(version) {
+  if (LEGACY_RUNTIME_VERSIONS.has(version)) return [...LEGACY_RUNTIME_FILES];
+  if (version === '0.9.20') return [...V0920_RUNTIME_FILES];
+  throw new Error('installed runtime version is unsupported');
+}
+
 const ATTEMPT_WINDOW_DEFAULTS = Object.freeze({
   attemptWindowMinSeconds: 1800,
   attemptWindowMaxSeconds: 7200,
@@ -111,6 +158,10 @@ export async function activeUpgradePreflight(options) {
     'source_manifest', () => createRuntimeManifest(options.sourceRoot),
   );
   requireCheck(sourceManifest.version === EXPECTED_TARGET, 'source_manifest');
+  const expectedRuntimeFiles = await checked(
+    'formal_layout',
+    async () => expectedInstalledRuntimeFiles(installedPackage.version),
+  );
   const layout = await checked('formal_layout', () => verifyFormalReleaseLayout({
     currentLink: options.currentLink,
     heartbeatRoot: options.heartbeatRoot,
@@ -118,6 +169,7 @@ export async function activeUpgradePreflight(options) {
     releasePrefix: options.releasePrefix,
     backupPrefix: options.installBackupPrefix,
     expectedUid: owner,
+    expectedRuntimeFiles,
   }));
   requireCheck(layout.version === installedPackage.version, 'formal_layout');
 

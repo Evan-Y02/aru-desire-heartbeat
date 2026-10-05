@@ -150,11 +150,11 @@ This stops future cycles and closes delivery while preserving evolved state.
 
 ## 9. Upgrade
 
-For an already enabled v0.9.14 through v0.9.19 production installation, use
-the single transactional entry point from the v0.9.20 checkout:
+For an already enabled v0.9.14 through v0.9.20 production installation, use
+the single transactional entry point from the v0.9.22 checkout:
 
 ```bash
-sudo /absolute/path/to/v0.9.20/source/scripts/upgrade-active-production-once.sh --apply
+sudo /absolute/path/to/v0.9.22/source/scripts/upgrade-active-production-once.sh --apply
 ```
 
 The preflight emits a fixed `failure_class`. Its systemd comparison
@@ -164,12 +164,19 @@ parameter, permission, user, environment assignment, unit section, or other
 effective content fails closed before backup creation, production mutation, or
 service quiesce.
 
-Version 0.9.20 runs the complete live baseline health contract before it creates
-the rollback snapshot or quiesces any service. The nested installer then checks
-an explicit quiesced-state contract and reuses the owner-only non-sensitive
-baseline snapshot; it does not require an intentionally stopped service to
-answer. A genuine baseline fault still fails before production mutation, while
-every failure after snapshot creation retains automatic rollback.
+Version 0.9.22 validates the installed version against its own historical
+runtime closure before it creates the rollback snapshot or quiesces any service.
+v0.9.14 through v0.9.19 use the verified 31-file closure and v0.9.20 uses its
+32-file closure. Both canonical manifests, their allowed paths, aggregate
+digest, per-file size and SHA-256, package version, ownership, deployment
+metadata, and current-release binding remain fail-closed.
+
+The transaction then runs the complete live baseline health contract. The
+nested installer checks an explicit quiesced-state contract and reuses the
+owner-only non-sensitive baseline snapshot; it does not require an intentionally
+stopped service to answer. A genuine baseline fault still fails before
+production mutation, while every failure after snapshot creation retains
+automatic rollback.
 
 After installation, the heartbeat timer remains inactive while a verifier runs
 as the `aru-desire` service user. It loads the installed configuration, state,

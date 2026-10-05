@@ -336,30 +336,23 @@ test('fixed proactive classifications separate scheduling, selection, and failur
   ]);
   const directory = await tempDirectory();
   const heartbeatConfig = structuredClone(baseConfig);
-  heartbeatConfig.attemptWindowMinSeconds = 1800;
-  heartbeatConfig.attemptWindowMaxSeconds = 7200;
-  await initializeState(directory, createInitialState(heartbeatConfig, NOW), heartbeatConfig);
-  const scheduled = await runHeartbeatCycle({
+  const legacyState = createInitialState(heartbeatConfig, NOW);
+  legacyState.nextAttemptAt = {
+    epochMs: NOW + 7_200_000,
+    iso: new Date(NOW + 7_200_000).toISOString(),
+  };
+  await initializeState(directory, legacyState, heartbeatConfig);
+  const heartbeat = await runHeartbeatCycle({
     dataDirectory: directory,
     heartbeatConfig,
     deliveryConfig: deliveryConfig(directory, false),
     submitEvent: async () => assert.fail('sender must not run'),
     nowMs: NOW + 600_000,
   });
-  assert.equal(scheduled.attemptOpportunity, false);
-  assert.deepEqual(scheduled.categories, ['scheduled_not_due']);
-
+  assert.equal(heartbeat.attemptOpportunity, true);
+  assert.deepEqual(heartbeat.categories, ['threshold_not_met']);
   const state = await loadState(directory, heartbeatConfig);
-  const dueAt = state.nextAttemptAt.epochMs;
-  const threshold = await runHeartbeatCycle({
-    dataDirectory: directory,
-    heartbeatConfig,
-    deliveryConfig: deliveryConfig(directory, false),
-    submitEvent: async () => assert.fail('sender must not run'),
-    nowMs: dueAt,
-  });
-  assert.equal(threshold.attemptOpportunity, true);
-  assert.deepEqual(threshold.categories, ['threshold_not_met']);
+  assert.equal(state.nextAttemptAt.epochMs, NOW + 1_200_000);
 
   assert.equal(classifyDeliveryFailure({ code: 'DELIVERY_TIMEOUT' }), 'timeout');
   assert.equal(

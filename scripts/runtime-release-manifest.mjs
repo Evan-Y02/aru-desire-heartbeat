@@ -28,9 +28,25 @@ function combinedDigest(files) {
   return digest.digest('hex');
 }
 
-export async function createRuntimeManifest(rootArgument) {
+function validateRuntimeFileList(relativeFiles) {
+  if (!Array.isArray(relativeFiles) || relativeFiles.length === 0) {
+    throw new Error('runtime file list is invalid');
+  }
+  let previous = null;
+  for (const relative of relativeFiles) {
+    if (typeof relative !== 'string' || relative.length === 0 ||
+        path.isAbsolute(relative) || relative.split('/').includes('..') ||
+        (previous !== null && previous.localeCompare(relative) >= 0)) {
+      throw new Error('runtime file list is invalid');
+    }
+    previous = relative;
+  }
+  return relativeFiles;
+}
+
+export async function createRuntimeManifestForFiles(rootArgument, relativeFilesArgument) {
   const root = path.resolve(rootArgument);
-  const relativeFiles = await runtimeReleaseFiles(root);
+  const relativeFiles = validateRuntimeFileList(relativeFilesArgument);
   const files = [];
   for (const relative of relativeFiles) {
     const { info, bytes } = await regularFile(path.join(root, relative), `runtime ${relative}`);
@@ -54,6 +70,11 @@ export async function createRuntimeManifest(rootArgument) {
     digest: combinedDigest(files),
     files,
   };
+}
+
+export async function createRuntimeManifest(rootArgument) {
+  const root = path.resolve(rootArgument);
+  return createRuntimeManifestForFiles(root, await runtimeReleaseFiles(root));
 }
 
 function validateManifestShape(manifest) {
@@ -84,7 +105,11 @@ function validateManifestShape(manifest) {
   }
 }
 
-export async function verifyRuntimeManifest(rootArgument, manifestArgument) {
+export async function verifyRuntimeManifest(
+  rootArgument,
+  manifestArgument,
+  { expectedFiles = null } = {},
+) {
   const root = path.resolve(rootArgument);
   const { bytes } = await regularFile(path.resolve(manifestArgument), 'runtime manifest');
   let manifest;
@@ -94,9 +119,12 @@ export async function verifyRuntimeManifest(rootArgument, manifestArgument) {
     throw new Error('runtime manifest is not valid JSON');
   }
   validateManifestShape(manifest);
-  const expectedFiles = await runtimeReleaseFiles(root);
-  if (JSON.stringify(manifest.files.map((file) => file.path)) !== JSON.stringify(expectedFiles)) {
-    throw new Error('runtime manifest does not match the recursive closure');
+  const closureFiles = expectedFiles === null ?
+    await runtimeReleaseFiles(root) :
+    validateRuntimeFileList(expectedFiles);
+  if (JSON.stringify(manifest.files.map((file) => file.path)) !==
+      JSON.stringify(closureFiles)) {
+    throw new Error('runtime manifest does not match the expected release closure');
   }
   for (const file of manifest.files) {
     const actual = await regularFile(path.join(root, file.path), `runtime ${file.path}`);

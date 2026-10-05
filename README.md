@@ -19,6 +19,32 @@ The optional Solo Session layer separates autonomous selection from preparation,
 structured action beats, edge, release/no-release completion, and downstream
 settlement. It is also disabled by default. See `SOLO_SESSION_DESIGN.md`.
 
+## 0.9.22 heartbeat-cadence expression and legacy manifest verification
+
+Version 0.9.22 evaluates expression on every ten-minute heartbeat. Once the
+highest active desire reaches the 78% trigger, autonomous expression may choose
+to remain silent three consecutive times; the fourth consecutive eligible
+heartbeat must form a contact decision. Fatigue and stress may influence the
+first three choices but cannot skip an eligible evaluation or block the fourth.
+Falling below 78% resets that streak. There is no minimum contact interval and
+no maximum-silence timer. The older
+30–120 minute attempt fields remain schema-compatible but no longer gate
+expression; `nextAttemptAt` now records the next heartbeat.
+
+Version 0.9.22 also fixes the active-upgrade preflight for genuine older
+installations. The verifier now selects the installed version's exact runtime
+closure: v0.9.14 through v0.9.19 use their verified 31-file layout, while
+v0.9.20 uses its 32-file layout. It no longer requires a legacy installation
+to contain files introduced only by the target release.
+
+Compatibility does not weaken integrity checks. Both canonical manifests must
+remain byte-identical, every listed path must match the version-bound allowlist,
+and every file is still checked by size and SHA-256 together with package
+version, ownership, permissions, deployment metadata, and current-release
+binding. Genuine legacy-layout fixtures and a pre-mutation tamper regression
+cover this boundary. All v0.9.20 post-install and rollback safeguards remain in
+force.
+
 ## 0.9.20 active-upgrade post-install verification
 
 Version 0.9.20 fixes the production configuration permission regression caused

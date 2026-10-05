@@ -1,5 +1,48 @@
 # Release inventory
 
+## 0.9.22
+
+Version 0.9.22 evaluates expression on every ten-minute heartbeat. At or above
+78%, the engine may remain silent on three consecutive eligible heartbeats and
+must form a contact decision on the fourth. Fatigue and stress may influence
+those choices but cannot skip an eligible evaluation or block the fourth.
+Falling below 78% resets the streak. No minimum contact interval or
+maximum-silence timer is added. The legacy
+attempt-window fields remain accepted for compatibility, while nextAttemptAt
+records the next heartbeat and no longer gates decision entry.
+
+The same release repairs the cross-version formal-layout check exposed by the
+first real v0.9.14-to-v0.9.20 upgrade attempt. The prior compatibility fixture
+changed a package version on the new 32-file runtime, so it failed to model the
+31-file closure actually installed by v0.9.14 through v0.9.19.
+
+Active preflight now binds each supported installed version to its verified
+historical path set. It continues to require byte-identical canonical
+manifests, valid manifest structure and aggregate digest, exact allowed paths,
+per-file size and SHA-256, package-version agreement, safe ownership and modes,
+deployment-metadata binding, and the expected current release. v0.9.20's
+32-file closure is also accepted as an upgrade source.
+
+Regression fixtures omit the post-install verifier from genuine legacy layouts,
+cover v0.9.14, v0.9.17, v0.9.18, v0.9.19, and v0.9.20 sources, and prove a
+listed runtime hash mismatch fails before backup creation or production
+mutation. The target runtime remains a 32-file closure; all v0.9.20
+post-install verification and automatic rollback controls are preserved.
+
+The v0.9.22 behavior and compatibility inventory is:
+
+- `src/engine.mjs`
+- `test/expression-autonomy.test.mjs`
+- `test/desire-heartbeat.test.mjs`
+- `test/runtime.test.mjs`
+- `scripts/active-production-upgrade-preflight.mjs`
+- `scripts/formal-release-layout.mjs`
+- `scripts/runtime-release-manifest.mjs`
+- `scripts/upgrade-active-production-once.sh`
+- `scripts/install-complete-message-hook-once.sh`
+- `test/active-production-upgrade.test.mjs`
+- `test/formal-release-layout.test.mjs`
+
 ## 0.9.20
 
 Version 0.9.20 repairs the root-umask permission regression exposed by the

@@ -7,6 +7,7 @@ import {
   decideState,
   satisfyDecision,
   satisfySoloDecision,
+  tickState,
 } from '../src/engine.mjs';
 import { loadConfig } from '../src/storage.mjs';
 
@@ -43,21 +44,33 @@ test('78 percent opens a real choice and silence preserves desire', () => {
   assert.equal(original.expression.consecutiveWithholds, 0);
 });
 
-test('three autonomous silences are allowed and the fourth eligible cycle must contact', () => {
+test('every 10-minute heartbeat evaluates: three silences, then the fourth must contact', () => {
   const config = alwaysSilentConfig();
   let state = stateWith(config, {
-    attachment: config.triggerThreshold,
+    attachment: 0.90,
     fatigue: 0.10,
   });
   for (let index = 1; index <= 3; index += 1) {
-    const result = decideState(state, config, NOW + index * 600_000);
+    const result = tickState(
+      state, config, NOW + index * 600_000, { scheduleAttempts: true },
+    );
+    assert.equal(result.attemptOpportunity, true);
+    assert.equal(result.decisionEntryExecuted, true);
     assert.equal(result.decision, null);
     assert.equal(result.expression.expressed, false);
     assert.equal(result.expression.withholdCount, index);
+    assert.equal(
+      result.state.nextAttemptAt.epochMs,
+      NOW + (index + 1) * 600_000,
+    );
     state = result.state;
   }
-  const forced = decideState(state, config, NOW + 4 * 600_000);
+  const forced = tickState(
+    state, config, NOW + 4 * 600_000, { scheduleAttempts: true },
+  );
   assert.ok(forced.decision);
+  assert.equal(forced.attemptOpportunity, true);
+  assert.equal(forced.decisionEntryExecuted, true);
   assert.equal(forced.decision.intent, 'reach_owner');
   assert.equal(forced.expression.forcedReason, 'forced-after-three-withholds');
   assert.equal(forced.state.expression.consecutiveWithholds, 3);

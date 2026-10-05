@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.9.22
+
+- Evaluate expression on every ten-minute heartbeat instead of gating new
+  decisions behind a randomized 30–120 minute attempt deadline.
+- At or above the 78% trigger, allow at most three consecutive autonomous
+  silences and require contact on the fourth consecutive eligible heartbeat;
+  fatigue or stress may influence a choice but cannot skip its evaluation.
+- Reset the silence streak below 78%, retain no minimum contact interval, and
+  add no maximum-silence timer; keep legacy scheduler fields only for schema
+  and upgrade compatibility.
+- Add heartbeat-cadence, fourth-cycle contact, restart, and legacy-deadline
+  regression coverage.
+- Validate an installed release against the exact version-bound runtime closure
+  used by that release instead of applying the target release's newer entry
+  list to a genuine legacy installation.
+- Pin v0.9.14–v0.9.19 to their verified 31-file closure and v0.9.20 to its
+  verified 32-file closure while retaining manifest shape, aggregate digest,
+  per-file size and SHA-256, ownership, path, and twin-manifest checks.
+- Replace version-only compatibility fixtures with genuine 31-file legacy
+  layouts, add v0.9.20 as a supported source, and prove listed-file tampering
+  still fails before backup creation or production mutation.
+- Preserve all v0.9.20 permission, service-user post-install verification,
+  isolated heartbeat, protected-state, timer-ordering, and rollback safeguards.
+
 ## 0.9.20
 
 - Force atomic configuration replacements to their declared modes even under

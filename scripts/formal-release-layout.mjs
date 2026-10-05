@@ -89,6 +89,7 @@ export async function verifyFormalReleaseLayout({
   releasePrefix = '/opt/aru-selfhost/releases/',
   backupPrefix = '/var/backups/aru-desire-turn-hook/',
   expectedUid = null,
+  expectedRuntimeFiles = null,
 }) {
   const canonicalHeartbeatManifest = path.join(
     path.resolve(heartbeatRoot), 'release-manifest.json',
@@ -116,9 +117,10 @@ export async function verifyFormalReleaseLayout({
   if (!heartbeatFile.bytes.equals(releaseFile.bytes)) {
     throw new Error('release and heartbeat manifests differ');
   }
+  const verificationOptions = { expectedFiles: expectedRuntimeFiles };
   const [heartbeatVerified, releaseVerified] = await Promise.all([
-    verifyRuntimeManifest(heartbeatRoot, heartbeatManifest),
-    verifyRuntimeManifest(heartbeatRoot, releaseManifest),
+    verifyRuntimeManifest(heartbeatRoot, heartbeatManifest, verificationOptions),
+    verifyRuntimeManifest(heartbeatRoot, releaseManifest, verificationOptions),
   ]);
   if (heartbeatVerified.digest !== releaseVerified.digest) {
     throw new Error('verified manifest digests differ');

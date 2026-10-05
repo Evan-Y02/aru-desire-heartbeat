@@ -56,7 +56,7 @@ export function createInitialState(config, epochMs = Date.now()) {
     updatedAt: at,
     lastTickAt: at,
     lastDecisionAt: null,
-    nextAttemptAt: nextAttemptAt(epochMs, config, epochMs),
+    nextAttemptAt: timePair(epochMs + config.heartbeatSeconds * 1000),
     drives: clone(config.initialDrives),
     lastSatisfiedAt,
     thoughts: [],
@@ -415,7 +415,7 @@ export function formDecision(state, config, nowMs, { clockValid = true } = {}) {
   state.expression ??= { consecutiveWithholds: 0 };
   let candidate = pickIntent(state.drives);
   let guard = sentinel(state, config, nowMs, candidate, { clockValid });
-  if (candidate?.score >= config.expression.mandatoryAt &&
+  if (candidate?.score >= config.triggerThreshold &&
       guard.formationBlockers.includes('fatigue-gate')) {
     const formationBlockers = guard.formationBlockers.filter(
       (reason) => reason !== 'fatigue-gate',
@@ -523,12 +523,7 @@ export function tickState(
   let decisionEntryExecuted = true;
   let result;
   if (scheduleAttempts) {
-    const scheduledAt = state.nextAttemptAt?.epochMs ?? null;
-    attemptOpportunity = scheduledAt !== null && nowMs >= scheduledAt;
-    decisionEntryExecuted = attemptOpportunity;
-    if (scheduledAt === null || attemptOpportunity) {
-      state.nextAttemptAt = nextAttemptAt(nowMs, config, scheduledAt ?? nowMs);
-    }
+    state.nextAttemptAt = timePair(nowMs + config.heartbeatSeconds * 1000);
   }
   if (decisionEntryExecuted) {
     result = formDecision(state, config, nowMs);
