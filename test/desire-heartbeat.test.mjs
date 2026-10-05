@@ -90,22 +90,21 @@ test('a 24-hour simulation evaluates every persisted 10-minute heartbeat', () =>
   }
 });
 
-test('all drives converge away from mechanical zero and one boundaries', () => {
-  const ticks = 14 * 24 * 6;
-  const fromZero = simulateState(
-    stateWith(Object.fromEntries(DRIVES.map((drive) => [drive, 0]))),
-    config,
-    ticks,
-  ).state;
-  const fromOne = simulateState(
-    stateWith(Object.fromEntries(DRIVES.map((drive) => [drive, 1]))),
-    config,
-    ticks,
-  ).state;
-  for (const drive of DRIVES) {
-    assert.ok(config.driveReturnPerHour[drive] > 0);
-    assert.ok(fromZero.drives[drive] > 0.05 && fromZero.drives[drive] < 0.95);
-    assert.ok(fromOne.drives[drive] > 0.05 && fromOne.drives[drive] < 0.95);
+test('self-driven drives accumulate while event-driven drives decay toward zero', () => {
+  const scheduled = structuredClone(config);
+  scheduled.selfDriveVariation = 0;
+  scheduled.triggerThreshold = 1;
+  const zero = stateWith(Object.fromEntries(DRIVES.map((drive) => [drive, 0])));
+  const one = stateWith(Object.fromEntries(DRIVES.map((drive) => [drive, 1])));
+  const fromZero = tickState(zero, scheduled, NOW + 86_400_000).state;
+  const fromOne = tickState(one, scheduled, NOW + 86_400_000).state;
+  for (const drive of ['attachment', 'curiosity', 'social', 'libido']) {
+    assert.equal(fromZero.drives[drive], 1);
+    assert.equal(fromOne.drives[drive], 1);
+  }
+  for (const drive of ['reflection', 'duty', 'fatigue', 'stress']) {
+    assert.equal(fromZero.drives[drive], 0);
+    assert.ok(fromOne.drives[drive] > 0 && fromOne.drives[drive] < 1);
   }
   assert.ok(Object.values(fromZero.lastSatisfiedAt).every((value) => value === null));
   assert.ok(Object.values(fromOne.lastSatisfiedAt).every((value) => value === null));
@@ -182,40 +181,65 @@ test('solo satisfaction is proportional, counted, and cooled down', () => {
   assert.equal(cooled.soloEligible, false);
 });
 
-test('all drives move naturally toward an interior equilibrium', () => {
+test('self-driven drives grow linearly while event-driven drives decay without a floor', () => {
+  const scheduled = structuredClone(config);
+  scheduled.selfDriveVariation = 0;
+  scheduled.triggerThreshold = 1;
   const state = stateWith({
+    attachment: 0.20,
+    curiosity: 0.20,
+    social: 0.20,
+    libido: 0.646,
     reflection: 0.50,
     duty: 0.40,
     fatigue: 0.40,
     stress: 0.60,
   });
-  const next = tickState(state, config, NOW + 3_600_000).state;
+  const next = tickState(state, scheduled, NOW + 3_600_000).state;
   for (const drive of ['attachment', 'curiosity', 'social', 'libido']) {
-    assert.ok(next.drives[drive] > state.drives[drive], `${drive} should self-drive`);
+    assert.ok(Math.abs(
+      next.drives[drive] - (state.drives[drive] + scheduled.driveGrowthPerHour[drive]),
+    ) < 1e-12, `${drive} should retain linear self-drive`);
   }
   for (const drive of ['reflection', 'duty', 'fatigue', 'stress']) {
-    assert.ok(next.drives[drive] < state.drives[drive], `${drive} should settle`);
-    assert.ok(next.drives[drive] >= 0);
+    const expected = state.drives[drive] *
+      Math.exp(-scheduled.driveReturnPerHour[drive]);
+    assert.ok(Math.abs(next.drives[drive] - expected) < 1e-12,
+      `${drive} should decay exponentially toward zero`);
   }
-  for (const drive of DRIVES) {
-    assert.ok(config.driveHomeLevels[drive] > 0 && config.driveHomeLevels[drive] < 1);
-    assert.ok(config.driveReturnPerHour[drive] > 0);
-  }
-  assert.equal(config.driveGrowthPerHour.reflection, 0);
-  assert.equal(config.driveGrowthPerHour.duty, 0);
-  assert.equal(config.driveGrowthPerHour.stress, 0);
+  assert.ok(Math.abs(next.drives.libido - 0.916) < 1e-12);
 });
 
-test('event-driven needs recover from zero toward a non-extreme baseline', () => {
-  const state = stateWith({ reflection: 0, duty: 0, stress: 0 });
+test('ten-minute libido heartbeats preserve elapsed-time linear accumulation', () => {
+  const scheduled = structuredClone(config);
+  scheduled.selfDriveVariation = 0;
+  scheduled.triggerThreshold = 1;
+  let state = stateWith({ libido: 0.646 });
+  for (let index = 1; index <= 6; index += 1) {
+    state = tickState(state, scheduled, NOW + index * 600_000).state;
+  }
+  assert.ok(Math.abs(state.drives.libido - 0.916) < 1e-12);
+});
+
+test('event-driven needs never rise from time alone and decay after events', () => {
+  const state = stateWith({ reflection: 0, duty: 0, fatigue: 0, stress: 0 });
   const next = tickState(state, config, NOW + 3_600_000).state;
-  assert.ok(next.drives.reflection > 0 && next.drives.reflection < config.driveHomeLevels.reflection);
-  assert.ok(next.drives.duty > 0 && next.drives.duty < config.driveHomeLevels.duty);
-  assert.ok(next.drives.stress > 0 && next.drives.stress < config.driveHomeLevels.stress);
+  for (const drive of ['reflection', 'duty', 'fatigue', 'stress']) {
+    assert.equal(next.drives[drive], 0);
+  }
   const fed = feedDrive(next, config, 'reflection', 0.40, NOW + 3_600_001);
   const settled = tickState(fed, config, NOW + 7_200_001).state;
   assert.ok(settled.drives.reflection > 0);
   assert.ok(settled.drives.reflection < fed.drives.reflection);
+  let exhausted = settled;
+  for (let index = 1; index <= 2; index += 1) {
+    exhausted = tickState(
+      exhausted,
+      config,
+      NOW + 7_200_001 + index * config.maxElapsedSeconds * 1000,
+    ).state;
+  }
+  assert.equal(exhausted.drives.reflection, 0);
 });
 
 test('all eight drives are clamped to 0..1', () => {

@@ -19,6 +19,10 @@ export const NEGATIVE_CAUSE_KINDS = Object.freeze([
 ]);
 const NEGATIVE_CAUSE_EPSILON = 0.000_001;
 
+const SELF_DRIVEN_DRIVES = new Set([
+  'attachment', 'curiosity', 'social', 'libido',
+]);
+
 const emptyNegativeContributions = () => Object.fromEntries(
   NEGATIVE_CAUSE_DRIVES.map((drive) => [drive, 0]),
 );
@@ -275,17 +279,21 @@ function updateDrivesForElapsed(state, config, elapsedMs, nowMs) {
   if (elapsedMs === 0) return;
   const hours = elapsedMs / 3_600_000;
   for (const drive of DRIVES) {
-    const growth = config.driveGrowthPerHour[drive] * selfDriveFactor(
-      nowMs, config.heartbeatSeconds, drive, config.selfDriveVariation,
-    );
-    const returnRate = config.driveReturnPerHour[drive];
-    const rate = growth + returnRate;
-    const equilibrium = (
-      growth + returnRate * config.driveHomeLevels[drive]
-    ) / rate;
-    state.drives[drive] = clamp(
-      equilibrium + (state.drives[drive] - equilibrium) * Math.exp(-rate * hours),
-    );
+    if (SELF_DRIVEN_DRIVES.has(drive)) {
+      const factor = selfDriveFactor(
+        nowMs, config.heartbeatSeconds, drive, config.selfDriveVariation,
+      );
+      state.drives[drive] = clamp(
+        state.drives[drive] + config.driveGrowthPerHour[drive] * hours * factor,
+      );
+      continue;
+    }
+
+    const current = state.drives[drive];
+    const decayed = current * Math.exp(-config.driveReturnPerHour[drive] * hours);
+    state.drives[drive] = decayed <= NEGATIVE_CAUSE_EPSILON
+      ? 0
+      : clamp(decayed);
   }
 }
 

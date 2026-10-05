@@ -17,7 +17,7 @@ case ${1:-} in
     ;;
   *)
     [[ $# -eq 1 ]] || {
-      echo 'usage: install-complete-message-hook-once.sh /absolute/path/to/v0.9.22/source' >&2
+      echo 'usage: install-complete-message-hook-once.sh /absolute/path/to/v0.9.23/source' >&2
       exit 64
     }
     SOURCE_ARGUMENT=$1
@@ -39,8 +39,8 @@ process.stdout.write(JSON.parse(fs.readFileSync(process.argv[2], 'utf8')).versio
 NODE
 )
 readonly SOURCE_VERSION
-[[ $SOURCE_VERSION == 0.9.22 ]] || {
-  echo 'installer requires source version 0.9.22' >&2
+[[ $SOURCE_VERSION == 0.9.23 ]] || {
+  echo 'installer requires source version 0.9.23' >&2
   exit 64
 }
 
@@ -154,7 +154,7 @@ esac
 [[ $DEVICE_COUNT_BEFORE =~ ^[0-9]+$ && $BRIDGE_CODE_BEFORE =~ ^[0-9]{3}$ ]]
 readonly DEVICE_COUNT_BEFORE BRIDGE_CODE_BEFORE
 [[ -f $ARU_SECRET && ! -L $ARU_SECRET && -f $DESIRE_SECRET && ! -L $DESIRE_SECRET ]] || {
-  echo 'v0.9.22 safety upgrade requires the existing owner-only hook secret channel' >&2
+  echo 'v0.9.23 safety upgrade requires the existing owner-only hook secret channel' >&2
   exit 73
 }
 [[ $(stat -c '%U:%G:%a:%h' "$ARU_SECRET") == 'aru-selfhost:aru-selfhost:600:1' ]]

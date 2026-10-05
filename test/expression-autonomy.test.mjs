@@ -46,6 +46,7 @@ test('78 percent opens a real choice and silence preserves desire', () => {
 
 test('every 10-minute heartbeat evaluates: three silences, then the fourth must contact', () => {
   const config = alwaysSilentConfig();
+  config.driveGrowthPerHour.attachment = 0;
   let state = stateWith(config, {
     attachment: 0.90,
     fatigue: 0.10,
@@ -129,4 +130,23 @@ test('dropping below 78 percent breaks a consecutive silence streak', () => {
   assert.equal(result.decision, null);
   assert.equal(result.expression, null);
   assert.equal(result.state.expression.consecutiveWithholds, 0);
+});
+
+test('linear accumulation may force contact at full before the fourth choice', () => {
+  const config = alwaysSilentConfig();
+  config.selfDriveVariation = 0;
+  let state = stateWith(config, {
+    attachment: 0.90,
+    fatigue: 0.10,
+  });
+  const first = tickState(
+    state, config, NOW + 600_000, { scheduleAttempts: true },
+  );
+  assert.equal(first.decision, null);
+  state = first.state;
+  const full = tickState(
+    state, config, NOW + 1_200_000, { scheduleAttempts: true },
+  );
+  assert.ok(full.decision);
+  assert.equal(full.expression.forcedReason, 'forced-at-full');
 });

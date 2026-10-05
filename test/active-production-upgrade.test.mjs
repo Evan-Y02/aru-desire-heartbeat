@@ -198,7 +198,7 @@ node -e 'const fs=require("fs"),n=JSON.parse(fs.readFileSync(process.argv[1])),o
 manifest="\$(node "\$target/scripts/runtime-release-manifest.mjs" create "\$target")"
 printf '%s\\n' "\$manifest" > "\$target/release-manifest.json"
 stamp=fixture
-new_release="\$prefix/opt/aru-selfhost/releases/v0.9.22-\$stamp"
+new_release="\$prefix/opt/aru-selfhost/releases/v0.9.23-\$stamp"
 rm -rf "\$new_release"; mkdir -p "\$new_release"
 cp "\$target/release-manifest.json" "\$new_release/release-manifest.json"
 printf '// upgraded release\\n' > "\$new_release/server.mjs"
@@ -281,7 +281,7 @@ test('active production upgrade succeeds, is repeat-safe, and explicitly rolls b
     const result = await runUpgrade(fixture, healthUrl);
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stdout, /^ACTIVE_UPGRADE=PASS$/mu);
-    assert.match(result.stdout, /^new_version=0\.9\.22$/mu);
+    assert.match(result.stdout, /^new_version=0\.9\.23$/mu);
     assert.doesNotMatch(result.stdout + result.stderr, /A{16}|message|token|credential/iu);
     assert.deepEqual(await readFile(path.join(fixture.data, 'state.json')), stateBefore);
     assert.deepEqual(await readFile(path.join(fixture.data, 'interaction-state.json')), interactionBefore);
@@ -531,18 +531,19 @@ test('legacy layout compatibility still rejects a listed runtime hash mismatch b
   });
 });
 
-test('genuine 31-file legacy layouts and the 32-file v0.9.20 upgrade compatibly', async () => {
+test('genuine 31-file legacy layouts and the 32-file modern layouts upgrade compatibly', async () => {
   await withHealthServer(async (healthUrl) => {
-    for (const version of ['0.9.14', '0.9.17', '0.9.18', '0.9.19', '0.9.20']) {
+    for (const version of ['0.9.14', '0.9.17', '0.9.18', '0.9.19', '0.9.20', '0.9.22']) {
       const compatible = await makeFixture(version);
       const manifest = JSON.parse(await readFile(
         path.join(compatible.heartbeat, 'release-manifest.json'), 'utf8',
       ));
-      assert.equal(manifest.fileCount, version === '0.9.20' ? 32 : 31, version);
+      const modern = version === '0.9.20' || version === '0.9.22';
+      assert.equal(manifest.fileCount, modern ? 32 : 31, version);
       assert.equal(
         manifest.files.some((file) =>
           file.path === 'scripts/active-production-postinstall-verify.mjs'),
-        version === '0.9.20',
+        modern,
         version,
       );
       const result = await runUpgrade(compatible, healthUrl);

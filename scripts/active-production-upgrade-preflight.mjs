@@ -8,9 +8,9 @@ import { validateConfig, validateState } from '../src/schema.mjs';
 import { verifyFormalReleaseLayout } from './formal-release-layout.mjs';
 import { createRuntimeManifest } from './runtime-release-manifest.mjs';
 
-const EXPECTED_TARGET = '0.9.22';
+const EXPECTED_TARGET = '0.9.23';
 const SUPPORTED_OLD = new Set([
-  '0.9.14', '0.9.15', '0.9.16', '0.9.17', '0.9.18', '0.9.19', '0.9.20',
+  '0.9.14', '0.9.15', '0.9.16', '0.9.17', '0.9.18', '0.9.19', '0.9.20', '0.9.22',
 ]);
 const LEGACY_ATTEMPT_SCHEDULER_VERSIONS = new Set(['0.9.14', '0.9.15', '0.9.16']);
 const LEGACY_RUNTIME_VERSIONS = new Set([
@@ -56,7 +56,7 @@ const V0920_RUNTIME_FILES = Object.freeze([
 
 export function expectedInstalledRuntimeFiles(version) {
   if (LEGACY_RUNTIME_VERSIONS.has(version)) return [...LEGACY_RUNTIME_FILES];
-  if (version === '0.9.20') return [...V0920_RUNTIME_FILES];
+  if (version === '0.9.20' || version === '0.9.22') return [...V0920_RUNTIME_FILES];
   throw new Error('installed runtime version is unsupported');
 }
 

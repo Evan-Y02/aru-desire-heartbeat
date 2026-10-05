@@ -125,7 +125,7 @@ test('same gated pending survives restart without duplicate timeline entries', a
   const directory = await tempDirectory();
   const heartbeatConfig = structuredClone(baseConfig);
   heartbeatConfig.expression.baseWillingness = 1;
-  await initial(directory, heartbeatConfig, { attachment: 0.95, fatigue: 0.1 });
+  await initial(directory, heartbeatConfig, { attachment: 0.80, fatigue: 0.1 });
   const blocked = deliveryConfig(directory, false);
   const first = await runHeartbeatCycle({
     dataDirectory: directory,

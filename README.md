@@ -19,6 +19,22 @@ The optional Solo Session layer separates autonomous selection from preparation,
 structured action beats, edge, release/no-release completion, and downstream
 settlement. It is also disabled by default. See `SOLO_SESSION_DESIGN.md`.
 
+## 0.9.23 linear self-drive restoration
+
+Version 0.9.23 restores v0.9.5-compatible elapsed-time accumulation for
+`attachment`, `curiosity`, `social`, and `libido`. These positive needs add
+their configured hourly growth directly, retain the deterministic ±35% heartbeat
+variation, and clamp only at 100%. With the default libido rate, a ten-minute
+heartbeat adds 4.5 percentage points on average, bounded from approximately 2.9
+to 6.1 points, rather than slowing toward an interior equilibrium.
+
+`reflection`, `duty`, `fatigue`, and `stress` rise only from conversation or
+external events and decay exponentially toward the true 0% floor; elapsed time
+never raises them. Conversation stimulus, negative-event recovery, proportional
+satisfaction, and the v0.9.22 every-heartbeat expression rules remain intact. The persisted state schema is unchanged. The active upgrade
+path now accepts a manifest-bound v0.9.22 installation as a verified 32-file
+source while preserving all preflight and automatic rollback checks.
+
 ## 0.9.22 heartbeat-cadence expression and legacy manifest verification
 
 Version 0.9.22 evaluates expression on every ten-minute heartbeat. Once the
@@ -467,14 +483,18 @@ The default configuration cannot deliver.
 
 ## Drive dynamics
 
-All eight drives have a true zero lower bound and no hidden floor. They evolve
-toward bounded interior equilibria determined by configured growth, home levels,
-and return rates. Negative external events add separately tracked contributions
-to `reflection`, `duty`, `fatigue`, and `stress`; linked recovery or natural
-decay removes only those contributions. A successful expression lowers the
-selected drive proportionally rather than resetting it, retaining continuity and
-aftertone. The engine remains deterministic and makes no model or conversation
-call.
+All eight drives have a true zero lower bound and no hidden floor. The
+self-driven positive needs—`attachment`, `curiosity`, `social`, and
+`libido`—accumulate linearly with elapsed time at their configured v0.9.5
+growth rates, including the bounded deterministic per-heartbeat variation, and
+clamp only at 100%. Event-driven `reflection`, `duty`, `fatigue`, and
+`stress` have no baseline: conversation or external events can raise them,
+while elapsed time can only decay them toward 0%.
+Negative external events add separately tracked contributions to those four
+event-driven drives; linked recovery or natural decay removes only those
+contributions. A successful expression lowers the selected drive proportionally
+rather than resetting it, retaining continuity and aftertone. The engine remains
+deterministic and makes no model or conversation call.
 
 On narrow screens the eight drive cards use a compact two-column, four-row grid
 so the timeline begins immediately after the complete snapshot.
@@ -563,9 +583,11 @@ time, so scheduler jitter cannot extend it. After it ends, the current drives ar
 evaluated afresh. Decisions whose delivery was attempted remain fail-closed and
 do not use this expiry path.
 
-Drive evolution uses bounded exponential movement toward an internal
-equilibrium. Every drive has a positive return rate and a non-extreme home
-level, so long idle periods approach an interior value instead of mechanically
-pinning four drives to 100% and four to 0%.
+Drive evolution deliberately separates self-driven needs from event-driven
+state. Attachment, curiosity, social need, and libido use v0.9.5-compatible
+linear elapsed-time accumulation, while reflection, duty, fatigue, and stress
+use one-way exponential decay toward the true 0% floor; elapsed time never raises
+an event-driven drive. Legacy home-level fields remain accepted for configuration
+and upgrade compatibility but no longer create a baseline for any drive.
 
 See `ARU_INTEGRATION.md` for the source-backed integration boundary.

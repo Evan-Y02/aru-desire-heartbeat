@@ -1,5 +1,37 @@
 # Release inventory
 
+## 0.9.23
+
+Version 0.9.23 restores direct elapsed-time accumulation for the four
+self-driven positive needs: attachment, curiosity, social need, and libido.
+Their configured hourly growth again has the v0.9.5 meaning, including bounded
+deterministic heartbeat variation and the 0..1 clamp. Reflection, duty, fatigue,
+and stress have no baseline: conversation or external events raise them, while
+elapsed time only decays them toward 0%.
+
+This keeps conversation stimulus, negative-event recovery, proportional
+satisfaction, the 78% trigger, every-ten-minute evaluation, and the rule that
+three consecutive voluntary silences require contact on the fourth eligible
+heartbeat. Reaching 100% may still force contact sooner.
+
+The state and configuration schemas remain unchanged. Active-upgrade preflight
+now accepts v0.9.22 as a verified 32-file source in addition to the prior
+supported versions, without weakening manifest, ownership, permission,
+production-state, post-install, or rollback checks.
+
+The v0.9.23 behavior and compatibility inventory is:
+
+- `src/engine.mjs`
+- `test/desire-heartbeat.test.mjs`
+- `test/expression-autonomy.test.mjs`
+- `test/runtime.test.mjs`
+- `scripts/active-production-upgrade-preflight.mjs`
+- `scripts/upgrade-active-production-once.sh`
+- `scripts/install-complete-message-hook-once.sh`
+- `test/active-production-upgrade.test.mjs`
+- `test/formal-release-layout.test.mjs`
+- `test/turn-hook-install.test.mjs`
+
 ## 0.9.22
 
 Version 0.9.22 evaluates expression on every ten-minute heartbeat. At or above

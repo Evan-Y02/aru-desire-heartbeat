@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.9.23
+
+- Restore v0.9.5-compatible linear elapsed-time accumulation for attachment,
+  curiosity, social need, and libido while preserving deterministic bounded
+  heartbeat variation and the 0..1 clamp.
+- Give all eight drives a true zero floor with no home baseline. Reflection,
+  duty, fatigue, and stress rise only from conversation or external events and
+  decay exponentially to zero over time; preserve negative-event recovery,
+  proportional satisfaction, v0.9.22 expression cadence, and persisted-state
+  compatibility.
+
 ## 0.9.22
 
 - Evaluate expression on every ten-minute heartbeat instead of gating new
